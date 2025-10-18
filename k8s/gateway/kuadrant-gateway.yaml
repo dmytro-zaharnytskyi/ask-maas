@@ -1,0 +1,292 @@
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: Gateway
+metadata:
+  name: ask-maas-gateway
+  namespace: ask-maas-gateway
+  annotations:
+    kuadrant.io/namespace: ask-maas-gateway
+spec:
+  gatewayClassName: kuadrant-multi-cluster-gateway-instance
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: ask-maas-tls-cert
+        namespace: ask-maas-gateway
+    allowedRoutes:
+      namespaces:
+        from: All
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: ask-maas-api-route
+  namespace: ask-maas-gateway
+  labels:
+    app: ask-maas
+    route: api
+spec:
+  parentRefs:
+  - name: ask-maas-gateway
+    namespace: ask-maas-gateway
+  hostnames:
+  - "ask-maas.apps.cluster.local"  # Adjust to your domain
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/
+    backendRefs:
+    - name: ask-maas-orchestrator-service
+      namespace: ask-maas-api
+      port: 8000
+      weight: 100
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: ghost-article-site-service
+      namespace: ask-maas-frontend
+      port: 3000
+      weight: 100
+---
+apiVersion: kuadrant.io/v1beta2
+kind: AuthPolicy
+metadata:
+  name: ask-maas-auth-policy
+  namespace: ask-maas-gateway
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: ask-maas-api-route
+  rules:
+    authentication:
+      "anonymous-access":
+        anonymous: {}
+        priority: 10
+        when:
+        - selector: request.path
+          operator: matches
+          value: "^/api/v1/(chat|ingest/page)$"
+      
+      "health-endpoints":
+        anonymous: {}
+        priority: 5
+        when:
+        - selector: request.path
+          operator: matches
+          value: "^/api/v1/health.*$"
+      
+      "protected-endpoints":
+        priority: 20
+        credentials:
+          authorizationHeader:
+            prefix: Bearer
+        jwt:
+          issuerUrl: https://sso.redhat.com/auth/realms/redhat-external
+          audiences:
+          - ask-maas-api
+        when:
+        - selector: request.path
+          operator: matches
+          value: "^/api/v1/admin/.*$"
+    
+    authorization:
+      "rate-limit-check":
+        priority: 10
+        opa:
+          rego: |
+            allow = true
+            
+            # Check if user is rate limited
+            rate_limited := input.request.headers["X-Rate-Limited"][0] == "true"
+            
+            # Deny if rate limited
+            allow = false {
+              rate_limited
+            }
+    
+    response:
+      success:
+        headers:
+          "X-Auth-User":
+            selector: auth.identity.sub
+          "X-Request-ID":
+            selector: request.id
+      
+      unauthorized:
+        headers:
+          "WWW-Authenticate":
+            value: Bearer realm="ask-maas"
+        body:
+          value: |
+            {
+              "error": "Authentication required",
+              "status": 401
+            }
+      
+      forbidden:
+        body:
+          value: |
+            {
+              "error": "Access denied",
+              "status": 403
+            }
+---
+apiVersion: kuadrant.io/v1beta2
+kind: RateLimitPolicy
+metadata:
+  name: ask-maas-rate-limit
+  namespace: ask-maas-gateway
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: ask-maas-api-route
+  limits:
+    # Global rate limit
+    - rates:
+      - limit: 1000
+        duration: 1m
+      when:
+      - selector: request.path
+        operator: matches
+        value: ".*"
+    
+    # Per-IP rate limit for chat endpoint
+    - rates:
+      - limit: 60
+        duration: 1m
+      counters:
+      - request.headers.x-forwarded-for
+      when:
+      - selector: request.path
+        operator: eq
+        value: "/api/v1/chat"
+    
+    # Per-IP burst limit for chat endpoint
+    - rates:
+      - limit: 20
+        duration: 10s
+      counters:
+      - request.headers.x-forwarded-for
+      when:
+      - selector: request.path
+        operator: eq
+        value: "/api/v1/chat"
+    
+    # Higher limits for authenticated users
+    - rates:
+      - limit: 300
+        duration: 1m
+      counters:
+      - auth.identity.sub
+      when:
+      - selector: auth.identity.sub
+        operator: neq
+        value: ""
+    
+    # Ingest endpoint limits
+    - rates:
+      - limit: 10
+        duration: 1m
+      counters:
+      - request.headers.x-forwarded-for
+      when:
+      - selector: request.path
+        operator: matches
+        value: "^/api/v1/ingest/.*$"
+    
+    # Health check exemption
+    - rates:
+      - limit: 10000
+        duration: 1m
+      when:
+      - selector: request.path
+        operator: matches
+        value: "^/api/v1/health.*$"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kuadrant-config
+  namespace: ask-maas-gateway
+data:
+  authorino-config.yaml: |
+    # Authorino configuration
+    server:
+      http:
+        port: 5001
+      grpc:
+        port: 50051
+    
+    oidcServer:
+      enabled: false
+    
+    log:
+      level: info
+      format: json
+    
+    metrics:
+      enabled: true
+      port: 8080
+      path: /metrics
+    
+    tracing:
+      enabled: true
+      endpoint: otel-collector.ask-maas-observability.svc.cluster.local:4317
+  
+  limitador-config.yaml: |
+    # Limitador configuration
+    limits:
+      - namespace: ask-maas
+        max_value: 60
+        seconds: 60
+        conditions:
+          - "req.path == '/api/v1/chat'"
+        variables:
+          - "req.remote_address"
+      
+      - namespace: ask-maas
+        max_value: 20
+        seconds: 10
+        conditions:
+          - "req.path == '/api/v1/chat'"
+        variables:
+          - "req.remote_address"
+      
+      - namespace: ask-maas
+        max_value: 10
+        seconds: 60
+        conditions:
+          - "req.path =~ '^/api/v1/ingest/.*$'"
+        variables:
+          - "req.remote_address"
+    
+    storage:
+      type: redis
+      redis:
+        url: redis://redis-service.ask-maas-gateway.svc.cluster.local:6379
+        cache_size: 10000
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ask-maas-tls-cert
+  namespace: ask-maas-gateway
+type: kubernetes.io/tls
+data:
+  # These are example values - replace with actual certificates
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi4uLgotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0t
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCi4uLgotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0t

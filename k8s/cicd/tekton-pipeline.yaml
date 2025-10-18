@@ -1,0 +1,366 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: ask-maas-build-pipeline
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: git-url
+    type: string
+    description: Git repository URL
+  - name: git-revision
+    type: string
+    description: Git revision to build
+    default: main
+  - name: image-registry
+    type: string
+    description: Image registry URL
+    default: quay.io/ask-maas
+  - name: component
+    type: string
+    description: Component to build (api, frontend)
+  
+  workspaces:
+  - name: shared-workspace
+  - name: docker-credentials
+  
+  tasks:
+  - name: git-clone
+    taskRef:
+      name: git-clone
+      kind: ClusterTask
+    params:
+    - name: url
+      value: $(params.git-url)
+    - name: revision
+      value: $(params.git-revision)
+    - name: subdirectory
+      value: ""
+    - name: deleteExisting
+      value: "true"
+    workspaces:
+    - name: output
+      workspace: shared-workspace
+  
+  - name: security-scan
+    runAfter: ["git-clone"]
+    taskRef:
+      name: trivy-scan
+    params:
+    - name: component
+      value: $(params.component)
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+  
+  - name: build-api
+    when:
+    - input: "$(params.component)"
+      operator: in
+      values: ["api"]
+    runAfter: ["security-scan"]
+    taskRef:
+      name: buildah
+      kind: ClusterTask
+    params:
+    - name: IMAGE
+      value: $(params.image-registry)/orchestrator-api:$(tasks.git-clone.results.commit)
+    - name: DOCKERFILE
+      value: ./ask-maas-api/Dockerfile
+    - name: CONTEXT
+      value: ./ask-maas-api
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+    - name: dockerconfig
+      workspace: docker-credentials
+  
+  - name: build-frontend
+    when:
+    - input: "$(params.component)"
+      operator: in
+      values: ["frontend"]
+    runAfter: ["security-scan"]
+    taskRef:
+      name: buildah
+      kind: ClusterTask
+    params:
+    - name: IMAGE
+      value: $(params.image-registry)/ghost-article-site:$(tasks.git-clone.results.commit)
+    - name: DOCKERFILE
+      value: ./ghost-site/Dockerfile
+    - name: CONTEXT
+      value: ./ghost-site
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+    - name: dockerconfig
+      workspace: docker-credentials
+  
+  - name: deploy-dev
+    runAfter: ["build-api", "build-frontend"]
+    taskRef:
+      name: kubernetes-actions
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env bash
+        set -e
+        
+        COMPONENT=$(params.component)
+        COMMIT=$(tasks.git-clone.results.commit)
+        
+        if [ "$COMPONENT" == "api" ]; then
+          kubectl set image deployment/ask-maas-orchestrator \
+            orchestrator=$(params.image-registry)/orchestrator-api:$COMMIT \
+            -n ask-maas-api
+        elif [ "$COMPONENT" == "frontend" ]; then
+          kubectl set image deployment/ghost-article-site \
+            frontend=$(params.image-registry)/ghost-article-site:$COMMIT \
+            -n ask-maas-frontend
+        fi
+        
+        kubectl rollout status deployment -n ask-maas-${COMPONENT}
+  
+  - name: smoke-test
+    runAfter: ["deploy-dev"]
+    taskRef:
+      name: http-request
+    params:
+    - name: url
+      value: http://ask-maas-orchestrator-service.ask-maas-api.svc.cluster.local:8000/health
+    - name: method
+      value: GET
+    - name: expected-status
+      value: "200"
+  
+  finally:
+  - name: notify
+    taskRef:
+      name: send-notification
+    params:
+    - name: message
+      value: "Build $(params.component) completed: $(tasks.git-clone.results.commit)"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: trivy-scan
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: component
+    type: string
+  workspaces:
+  - name: source
+  steps:
+  - name: scan
+    image: aquasec/trivy:latest
+    script: |
+      #!/bin/bash
+      set -e
+      
+      COMPONENT=$(params.component)
+      
+      if [ "$COMPONENT" == "api" ]; then
+        cd $(workspaces.source.path)/ask-maas-api
+        trivy fs --severity HIGH,CRITICAL --no-progress .
+      elif [ "$COMPONENT" == "frontend" ]; then
+        cd $(workspaces.source.path)/ghost-site
+        trivy fs --severity HIGH,CRITICAL --no-progress .
+      fi
+      
+      echo "Security scan completed for $COMPONENT"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kubernetes-actions
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: script
+    type: string
+  steps:
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    script: $(params.script)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: http-request
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: url
+    type: string
+  - name: method
+    type: string
+    default: GET
+  - name: expected-status
+    type: string
+    default: "200"
+  steps:
+  - name: request
+    image: curlimages/curl:latest
+    script: |
+      #!/bin/sh
+      set -e
+      
+      STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X $(params.method) $(params.url))
+      
+      if [ "$STATUS" != "$(params.expected-status)" ]; then
+        echo "Expected status $(params.expected-status), got $STATUS"
+        exit 1
+      fi
+      
+      echo "Health check passed: $STATUS"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: send-notification
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: message
+    type: string
+  steps:
+  - name: notify
+    image: alpine:latest
+    script: |
+      #!/bin/sh
+      echo "Notification: $(params.message)"
+      # Add actual notification logic here (Slack, email, etc.)
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: ask-maas-webhook
+  namespace: ask-maas-cicd
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+  - name: github-push
+    interceptors:
+    - ref:
+        name: "github"
+      params:
+      - name: "secretRef"
+        value:
+          secretName: github-webhook-secret
+          secretKey: secret
+      - name: "eventTypes"
+        value: ["push"]
+    bindings:
+    - ref: github-push-binding
+    template:
+      ref: ask-maas-pipeline-template
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-binding
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: git-url
+    value: $(body.repository.clone_url)
+  - name: git-revision
+    value: $(body.after)
+  - name: component
+    value: $(body.repository.name)
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: ask-maas-pipeline-template
+  namespace: ask-maas-cicd
+spec:
+  params:
+  - name: git-url
+  - name: git-revision
+  - name: component
+  resourcetemplates:
+  - apiVersion: tekton.dev/v1beta1
+    kind: PipelineRun
+    metadata:
+      generateName: ask-maas-build-
+    spec:
+      pipelineRef:
+        name: ask-maas-build-pipeline
+      params:
+      - name: git-url
+        value: $(tt.params.git-url)
+      - name: git-revision
+        value: $(tt.params.git-revision)
+      - name: component
+        value: $(tt.params.component)
+      workspaces:
+      - name: shared-workspace
+        volumeClaimTemplate:
+          spec:
+            accessModes:
+            - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+      - name: docker-credentials
+        secret:
+          secretName: docker-credentials
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tekton-triggers-sa
+  namespace: ask-maas-cicd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tekton-triggers-binding
+  namespace: ask-maas-cicd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-roles
+subjects:
+- kind: ServiceAccount
+  name: tekton-triggers-sa
+  namespace: ask-maas-cicd
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-webhook-secret
+  namespace: ask-maas-cicd
+type: Opaque
+stringData:
+  secret: "${WEBHOOK_SECRET}"  # Set via environment variable
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: docker-credentials
+  namespace: ask-maas-cicd
+type: kubernetes.io/dockerconfigjson
+stringData:
+  config.json: |
+    {
+      "auths": {
+        "quay.io": {
+          "username": "ask-maas-robot",
+          "password": "${REGISTRY_PASSWORD}",
+          "email": "askmaas@example.com"
+        }
+      }
+    }

@@ -1,0 +1,44 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ask-maas-frontend-route
+  namespace: ask-maas-frontend
+  labels:
+    app: ghost-article-site
+  annotations:
+    haproxy.router.openshift.io/timeout: 60s
+spec:
+  host: ask-maas-frontend.apps.${CLUSTER_DOMAIN}  # Replace with your cluster domain
+  to:
+    kind: Service
+    name: ghost-article-site-service
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ask-maas-api-route
+  namespace: ask-maas-api
+  labels:
+    app: ask-maas-orchestrator
+  annotations:
+    haproxy.router.openshift.io/timeout: 120s
+    haproxy.router.openshift.io/rate-limit-connections.rate-http: "100"
+spec:
+  host: ask-maas-api.apps.${CLUSTER_DOMAIN}  # Replace with your cluster domain
+  to:
+    kind: Service
+    name: ask-maas-orchestrator-service
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

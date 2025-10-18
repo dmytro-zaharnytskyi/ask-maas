@@ -1,0 +1,87 @@
+# GPU Node Configuration for Ask MaaS
+# Apply these configurations after the NVIDIA GPU Operator is installed
+
+---
+# Label GPU nodes for scheduling
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-node-labeling-script
+  namespace: ask-maas-cicd
+data:
+  label-nodes.sh: |
+    #!/bin/bash
+    # Label all nodes with NVIDIA GPUs
+    for node in $(oc get nodes -o name | cut -d/ -f2); do
+      if oc describe node $node | grep -q "nvidia.com/gpu"; then
+        echo "Labeling node $node as GPU node"
+        oc label node $node node-role.kubernetes.io/gpu=true --overwrite
+        oc label node $node nvidia.com/gpu.accelerator=tesla-t4 --overwrite
+      fi
+    done
+
+---
+# Resource Quota for Model Namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota
+  namespace: ask-maas-models
+spec:
+  hard:
+    requests.nvidia.com/gpu: "2"  # Maximum 2 GPUs for the namespace
+    requests.memory: "64Gi"
+    requests.cpu: "16"
+    persistentvolumeclaims: "10"
+    
+---
+# Priority Class for Model Pods
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ask-maas-model-priority
+value: 1000
+globalDefault: false
+description: "Priority class for Ask MaaS model serving pods"
+
+---
+# Node Affinity Configuration Template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-node-affinity-template
+  namespace: ask-maas-models
+data:
+  affinity.yaml: |
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: node-role.kubernetes.io/gpu
+              operator: In
+              values:
+              - "true"
+            - key: nvidia.com/gpu.accelerator
+              operator: In
+              values:
+              - tesla-t4
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+            - key: node-role.kubernetes.io/worker
+              operator: In
+              values:
+              - "true"
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - vllm-model
+            topologyKey: kubernetes.io/hostname

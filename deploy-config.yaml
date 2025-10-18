@@ -1,0 +1,220 @@
+# Ask MaaS Deployment Configuration
+# This file contains the tested and working configuration for Ask MaaS deployment
+
+# Model Configuration
+models:
+  # Recommended: Qwen 2.5 32B AWQ (Best quality, fits on L40S/A100)
+  qwen:
+    enabled: true
+    image: "vllm/vllm-openai:latest"
+    model: "Qwen/Qwen2.5-32B-Instruct-AWQ"
+    quantization: "awq"
+    served_model_name: "qwen2-32b-instruct"
+    gpu_memory_utilization: "0.95"
+    max_model_len: "8192"
+    max_num_seqs: "16"
+    swap_space: "2"
+    enforce_eager: true
+    resources:
+      requests:
+        memory: "20Gi"
+        cpu: "1"
+        nvidia.com/gpu: "1"
+      limits:
+        memory: "28Gi"
+        cpu: "2"
+        nvidia.com/gpu: "1"
+    cache_dirs:
+      HF_HOME: "/tmp/hf-home"
+      HOME: "/tmp"
+      VLLM_CACHE_DIR: "/tmp/vllm-cache"
+      TORCH_CUDA_ARCH_LIST: "8.9"  # For L40S
+
+  # Alternative: Mistral 7B AWQ (Smaller, for limited GPUs)
+  mistral:
+    enabled: false
+    image: "vllm/vllm-openai:v0.5.0.post1"
+    model: "TheBloke/Mistral-7B-Instruct-v0.2-AWQ"
+    quantization: "awq"
+    served_model_name: "mistral-7b-instruct"
+    gpu_memory_utilization: "0.85"
+    max_model_len: "4096"
+    max_num_seqs: "32"
+    resources:
+      requests:
+        memory: "8Gi"
+        cpu: "2"
+        nvidia.com/gpu: "1"
+      limits:
+        memory: "10Gi"
+        cpu: "4"
+        nvidia.com/gpu: "1"
+
+# Embedding Services
+embeddings:
+  tei_bge_m3:
+    enabled: true
+    image: "ghcr.io/huggingface/text-embeddings-inference:cpu-1.2"
+    model_id: "BAAI/bge-m3"
+    port: 8080
+    dimension: 1024
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+
+  tei_reranker:
+    enabled: true
+    image: "ghcr.io/huggingface/text-embeddings-inference:cpu-1.2"
+    model_id: "BAAI/bge-reranker-large"
+    port: 8080
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+
+# Orchestrator Configuration
+orchestrator:
+  replicas: 3
+  image: "orchestrator-api:latest"
+  environment:
+    ENVIRONMENT: "production"
+    MODEL_NAME: "qwen2-32b-instruct"  # CRITICAL: Must match served_model_name
+    MAX_CONTEXT_LENGTH: "8192"
+    MIN_RERANK_SCORE: "0.001"
+    CORS_ORIGINS: '["*"]'
+    OTEL_ENABLED: "false"
+    RETRIEVAL_TOP_K: "10"
+    RERANK_TOP_K: "3"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Redis Configuration
+redis:
+  image: "redis:7-alpine"
+  password: "${REDIS_PASSWORD}"  # Set via environment or generate during deployment
+  persistence_disabled: true  # Avoid permission issues in OpenShift
+  config:
+    save: ""  # Disable persistence
+    stop-writes-on-bgsave-error: "no"
+    maxmemory: "2gb"
+    maxmemory-policy: "allkeys-lru"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "2Gi"
+      cpu: "500m"
+
+# Frontend Configuration
+frontend:
+  replicas: 1
+  image: "ghost-article-site:latest"
+  build_args:
+    NODE_ENV: "production"
+  environment:
+    NODE_ENV: "production"
+    PORT: "3000"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Network Configuration
+routes:
+  api:
+    timeout: "60s"
+    tls:
+      termination: "edge"
+      insecureEdgeTerminationPolicy: "Redirect"
+  
+  frontend:
+    timeout: "30s"
+    tls:
+      termination: "edge"
+      insecureEdgeTerminationPolicy: "Redirect"
+
+# GPU Node Configuration
+gpu_node:
+  labels:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# Storage Configuration
+storage:
+  model_cache: "100Gi"
+  temp_cache: "20Gi"
+  redis_data: "10Gi"
+
+# Namespace Configuration
+namespaces:
+  - name: ask-maas-models
+    labels:
+      app: ask-maas
+      component: models
+  
+  - name: ask-maas-api
+    labels:
+      app: ask-maas
+      component: api
+  
+  - name: ask-maas-frontend
+    labels:
+      app: ask-maas
+      component: frontend
+
+# Health Check Configuration
+health_checks:
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+  
+  readiness:
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+
+# Timeout Configuration
+timeouts:
+  model_loading: 900  # 15 minutes for model download and load
+  deployment_wait: 300  # 5 minutes for regular deployments
+  request_timeout: 60  # 1 minute for API requests
+  stream_timeout: 300  # 5 minutes for streaming responses
+
+# Critical Environment Variables Reference
+# These MUST be set correctly for the system to work:
+#
+# In Orchestrator:
+#   MODEL_NAME: Must match the served_model_name of your chosen model
+#   VLLM_URL: http://vllm-<model>-service.ask-maas-models.svc.cluster.local:8080
+#   TEI_EMBEDDINGS_URL: http://tei-embeddings-service.ask-maas-models.svc.cluster.local:8080
+#   TEI_RERANKER_URL: http://tei-reranker-service.ask-maas-models.svc.cluster.local:8080
+#   REDIS_HOST: redis-service.ask-maas-api.svc.cluster.local
+#   REDIS_PASSWORD: (Set from redis-credentials secret)
+#
+# In vLLM:
+#   Ensure cache directories are writable (use /tmp)
+#   Set CUDA_VISIBLE_DEVICES if multiple GPUs
+#   TORCH_CUDA_ARCH_LIST must match your GPU architecture
+#
+# In Frontend:
+#   NEXT_PUBLIC_API_URL: Must point to the API route URL

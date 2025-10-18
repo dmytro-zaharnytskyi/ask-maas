@@ -1,0 +1,24 @@
+# Ask MaaS Environment Variables Template
+# Copy this file to .env and fill in your values
+
+# Redis Configuration
+REDIS_PASSWORD=your-secure-password-here
+
+# Cluster Configuration
+CLUSTER_DOMAIN=your-cluster.example.com
+
+# Model Selection (qwen or mistral)
+MODEL_TYPE=qwen
+
+# GitHub Token (optional, for private repos)
+GITHUB_TOKEN=
+
+# Resource Limits (optional)
+GPU_MEMORY_UTILIZATION=0.95
+MAX_CONTEXT_LENGTH=8192
+MAX_NUM_SEQS=16
+
+# Deployment Options
+SKIP_OPERATORS=false
+SKIP_BUILD=false
+DRY_RUN=false

@@ -1,0 +1,280 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ask-maas-dashboards
+  namespace: ask-maas-observability
+  labels:
+    grafana_dashboard: "true"
+data:
+  ask-maas-overview.json: |
+    {
+      "dashboard": {
+        "title": "Ask MaaS - System Overview",
+        "panels": [
+          {
+            "title": "Request Rate",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(rate(ask_maas_requests_total[5m])) by (endpoint)",
+                "legendFormat": "{{endpoint}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Error Rate",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(rate(ask_maas_requests_total{status=~\"5..\"}[5m])) / sum(rate(ask_maas_requests_total[5m]))",
+                "legendFormat": "Error Rate %"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "P95 Latency",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(ask_maas_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95 Latency"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Active Connections",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "targets": [
+              {
+                "expr": "ask_maas_active_connections",
+                "legendFormat": "Active Connections"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Cache Hit Rate",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+            "targets": [
+              {
+                "expr": "rate(ask_maas_cache_hits_total[5m]) / (rate(ask_maas_cache_hits_total[5m]) + rate(ask_maas_cache_misses_total[5m]))",
+                "legendFormat": "Cache Hit Rate"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Model Queue Depth",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+            "targets": [
+              {
+                "expr": "vllm_request_queue_length",
+                "legendFormat": "Queue Length"
+              }
+            ],
+            "type": "graph"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+
+  ask-maas-models.json: |
+    {
+      "dashboard": {
+        "title": "Ask MaaS - Model Performance",
+        "panels": [
+          {
+            "title": "Tokens per Second",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "rate(vllm_generation_tokens_total[5m]) / rate(vllm_request_success[5m])",
+                "legendFormat": "Tokens/sec"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "GPU Utilization",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "nvidia_gpu_duty_cycle",
+                "legendFormat": "GPU {{gpu}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "GPU Memory Usage",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes",
+                "legendFormat": "GPU {{gpu}} Memory"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Model Latency Distribution",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.5, rate(vllm_request_latency_seconds_bucket[5m]))",
+                "legendFormat": "P50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(vllm_request_latency_seconds_bucket[5m]))",
+                "legendFormat": "P95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(vllm_request_latency_seconds_bucket[5m]))",
+                "legendFormat": "P99"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Embedding Service Latency",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(tei_request_duration_seconds_bucket{job=\"tei-embeddings\"}[5m]))",
+                "legendFormat": "Embeddings P95"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Reranker Service Latency",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(tei_request_duration_seconds_bucket{job=\"tei-reranker\"}[5m]))",
+                "legendFormat": "Reranker P95"
+              }
+            ],
+            "type": "graph"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+
+  ask-maas-retrieval.json: |
+    {
+      "dashboard": {
+        "title": "Ask MaaS - Retrieval Quality",
+        "panels": [
+          {
+            "title": "Average Chunks Retrieved",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "avg(ask_maas_chunks_retrieved)",
+                "legendFormat": "Avg Chunks"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Reranker Score Distribution",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.5, ask_maas_reranker_score_bucket)",
+                "legendFormat": "Median Score"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Retrieval Latency",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(ask_maas_retrieval_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95 Retrieval Time"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Abstention Rate",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "targets": [
+              {
+                "expr": "rate(ask_maas_abstentions_total[5m]) / rate(ask_maas_requests_total{endpoint=\"/api/v1/chat\"}[5m])",
+                "legendFormat": "Abstention Rate"
+              }
+            ],
+            "type": "graph"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+
+  ask-maas-rate-limiting.json: |
+    {
+      "dashboard": {
+        "title": "Ask MaaS - Rate Limiting",
+        "panels": [
+          {
+            "title": "Rate Limited Requests",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(rate(limitador_limited_requests_total[5m])) by (namespace)",
+                "legendFormat": "{{namespace}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Rate Limit Utilization",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "limitador_counter_value / limitador_limit_value",
+                "legendFormat": "{{limit_name}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Requests by IP",
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "topk(10, sum by (client_ip) (rate(ask_maas_requests_total[5m])))",
+                "legendFormat": "{{client_ip}}"
+              }
+            ],
+            "type": "table"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }

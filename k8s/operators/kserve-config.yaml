@@ -1,0 +1,145 @@
+# KServe Configuration for Ask MaaS
+# Apply after OpenShift Serverless is installed
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inferenceservice-config
+  namespace: knative-serving
+data:
+  ingress: |
+    {
+      "ingressGateway": "knative-serving/knative-ingress-gateway",
+      "ingressService": "istio-ingressgateway.istio-system.svc.cluster.local",
+      "localGateway": "knative-serving/knative-local-gateway",
+      "localGatewayService": "knative-local-gateway.istio-system.svc.cluster.local"
+    }
+  storageInitializer: |
+    {
+      "image": "kserve/storage-initializer:v0.11.0",
+      "memoryRequest": "100Mi",
+      "memoryLimit": "1Gi",
+      "cpuRequest": "100m",
+      "cpuLimit": "1"
+    }
+  credentials: |
+    {
+      "gcs": {
+        "gcsCredentialFileName": "gcloud-application-credentials.json"
+      },
+      "s3": {
+        "s3AccessKeyIDName": "AWS_ACCESS_KEY_ID",
+        "s3SecretAccessKeyName": "AWS_SECRET_ACCESS_KEY",
+        "s3Endpoint": "",
+        "s3UseHttps": "1",
+        "s3Region": "us-east-1",
+        "s3VerifySSL": "1",
+        "s3UseVirtualBucket": ""
+      }
+    }
+
+---
+# KServe Runtime Configurations
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kserve-runtimes-config
+  namespace: ask-maas-models
+data:
+  vllm-runtime.yaml: |
+    apiVersion: serving.kserve.io/v1alpha1
+    kind: ClusterServingRuntime
+    metadata:
+      name: kserve-vllm
+    spec:
+      supportedModelFormats:
+        - name: vllm
+          version: "1"
+          autoSelect: true
+      containers:
+        - name: kserve-container
+          image: vllm/vllm-openai:v0.5.0
+          args:
+            - --model
+            - "{{.ModelPath}}"
+            - --port
+            - "8080"
+            - --trust-remote-code
+            - --download-dir
+            - /mnt/models
+            - --gpu-memory-utilization
+            - "0.9"
+            - --max-model-len
+            - "8192"
+            - --enforce-eager
+            - --quantization
+            - awq
+          env:
+            - name: STORAGE_URI
+              value: "{{.StorageURI}}"
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "20Gi"
+              nvidia.com/gpu: "1"
+
+  tei-runtime.yaml: |
+    apiVersion: serving.kserve.io/v1alpha1
+    kind: ClusterServingRuntime
+    metadata:
+      name: kserve-tei
+    spec:
+      supportedModelFormats:
+        - name: tei
+          version: "1"
+          autoSelect: true
+      containers:
+        - name: kserve-container
+          image: ghcr.io/huggingface/text-embeddings-inference:1.2
+          args:
+            - --model-id
+            - "{{.ModelPath}}"
+            - --port
+            - "8080"
+            - --json-output
+          env:
+            - name: STORAGE_URI
+              value: "{{.StorageURI}}"
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+
+---
+# Storage Secret for Model Downloads (if using S3/MinIO)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: model-storage-secret
+  namespace: ask-maas-models
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "minio-access-key"  # Replace with actual
+  AWS_SECRET_ACCESS_KEY: "minio-secret-key"  # Replace with actual
+
+---
+# ServiceAccount for KServe
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kserve-service-account
+  namespace: ask-maas-models
+  annotations:
+    serving.kserve.io/s3-endpoint: "minio-service.minio-system.svc:9000"  # If using MinIO
+    serving.kserve.io/s3-usehttps: "0"
+    serving.kserve.io/s3-verifyssl: "0"
+secrets:
+  - name: model-storage-secret

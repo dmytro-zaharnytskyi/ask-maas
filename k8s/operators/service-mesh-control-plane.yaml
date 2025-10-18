@@ -1,0 +1,125 @@
+apiVersion: maistra.io/v2
+kind: ServiceMeshControlPlane
+metadata:
+  name: ask-maas-mesh
+  namespace: ask-maas-gateway
+spec:
+  version: v2.4
+  tracing:
+    type: Jaeger
+    sampling: 10000  # 1% sampling rate
+  general:
+    logging:
+      logLevels:
+        default: warn
+  profiles:
+    - default
+  proxy:
+    accessLogging:
+      file:
+        name: /dev/stdout
+    networking:
+      trafficControl:
+        inbound:
+          excludedPorts:
+          - 8080  # Metrics ports
+          - 8081
+        outbound:
+          excludedPorts: []
+  gateways:
+    ingress:
+      service:
+        type: ClusterIP
+      volumes:
+      - volume:
+          secret:
+            secretName: ask-maas-gateway-cert
+        volumeMount:
+          name: ask-maas-gateway-cert
+          mountPath: /etc/certs
+    egress:
+      enabled: true
+      service:
+        type: ClusterIP
+  policy:
+    type: Istiod
+  telemetry:
+    type: Istiod
+  addons:
+    prometheus:
+      enabled: true
+    grafana:
+      enabled: true
+      install:
+        config:
+          env:
+            GF_SECURITY_ADMIN_USER: admin
+            GF_SECURITY_ADMIN_PASSWORD: admin
+        service:
+          ingress:
+            enabled: true
+    kiali:
+      enabled: true
+      install:
+        dashboard:
+          viewOnly: false
+        service:
+          ingress:
+            enabled: true
+  runtime:
+    defaults:
+      container:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: maistra.io/v1
+kind: ServiceMeshMemberRoll
+metadata:
+  name: default
+  namespace: ask-maas-gateway
+spec:
+  members:
+    - ask-maas-models
+    - ask-maas-api
+    - ask-maas-frontend
+    - ask-maas-gateway
+---
+# Network Policy for Service Mesh
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: istio-mesh-network
+  namespace: ask-maas-gateway
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              project: ask-maas
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              project: ask-maas
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-operators
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53

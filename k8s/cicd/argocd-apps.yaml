@@ -1,0 +1,274 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ask-maas
+  namespace: openshift-gitops
+spec:
+  description: Ask MaaS Project
+  sourceRepos:
+  - 'https://github.com/your-org/ask-maas'
+  destinations:
+  - namespace: 'ask-maas-*'
+    server: 'https://kubernetes.default.svc'
+  clusterResourceWhitelist:
+  - group: ''
+    kind: Namespace
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  roles:
+  - name: admin
+    policies:
+    - p, proj:ask-maas:admin, applications, *, ask-maas/*, allow
+    groups:
+    - ask-maas-admins
+  - name: developer
+    policies:
+    - p, proj:ask-maas:developer, applications, get, ask-maas/*, allow
+    - p, proj:ask-maas:developer, applications, sync, ask-maas/*, allow
+    groups:
+    - ask-maas-developers
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ask-maas-infrastructure
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ask-maas
+  source:
+    repoURL: https://github.com/your-org/ask-maas
+    targetRevision: main
+    path: k8s
+    directory:
+      recurse: true
+      include: '{namespaces/*.yaml,gpu/*.yaml,operators/*.yaml}'
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ask-maas-models
+  namespace: openshift-gitops
+spec:
+  project: ask-maas
+  source:
+    repoURL: https://github.com/your-org/ask-maas
+    targetRevision: main
+    path: k8s/models
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ask-maas-models
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  info:
+  - name: Description
+    value: Model serving infrastructure (vLLM, TEI)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ask-maas-api
+  namespace: openshift-gitops
+spec:
+  project: ask-maas
+  source:
+    repoURL: https://github.com/your-org/ask-maas
+    targetRevision: main
+    path: k8s/api
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ask-maas-api
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - RespectIgnoreDifferences=true
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas
+  info:
+  - name: Description
+    value: Orchestrator API and Redis cache
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ask-maas-gateway
+  namespace: openshift-gitops
+spec:
+  project: ask-maas
+  source:
+    repoURL: https://github.com/your-org/ask-maas
+    targetRevision: main
+    path: k8s/gateway
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ask-maas-gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+  info:
+  - name: Description
+    value: Kuadrant gateway and Service Mesh policies
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ask-maas-frontend
+  namespace: openshift-gitops
+spec:
+  project: ask-maas
+  source:
+    repoURL: https://github.com/your-org/ask-maas
+    targetRevision: main
+    path: k8s/frontend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ask-maas-frontend
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+  info:
+  - name: Description
+    value: Ghost Article Site frontend
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ask-maas-observability
+  namespace: openshift-gitops
+spec:
+  project: ask-maas
+  source:
+    repoURL: https://github.com/your-org/ask-maas
+    targetRevision: main
+    path: k8s/observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ask-maas-observability
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+  info:
+  - name: Description
+    value: Monitoring, metrics, and tracing
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ask-maas-environments
+  namespace: openshift-gitops
+spec:
+  generators:
+  - list:
+      elements:
+      - env: dev
+        namespace: ask-maas-dev
+        branch: develop
+      - env: staging
+        namespace: ask-maas-staging
+        branch: staging
+      - env: prod
+        namespace: ask-maas
+        branch: main
+  template:
+    metadata:
+      name: '{{env}}-ask-maas'
+    spec:
+      project: ask-maas
+      source:
+        repoURL: https://github.com/your-org/ask-maas
+        targetRevision: '{{branch}}'
+        path: k8s
+        helm:
+          valueFiles:
+          - values-{{env}}.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: openshift-gitops
+data:
+  service.slack: |
+    token: $slack-token
+  template.app-deployed: |
+    message: |
+      {{if eq .serviceType "slack"}}:white_check_mark:{{end}} Application *{{.app.metadata.name}}* is now running new version.
+      {{range .app.status.conditions}}
+      • {{.type}}: {{.message}}
+      {{end}}
+  template.app-health-degraded: |
+    message: |
+      {{if eq .serviceType "slack"}}:exclamation:{{end}} Application *{{.app.metadata.name}}* has degraded health.
+  template.app-sync-failed: |
+    message: |
+      {{if eq .serviceType "slack"}}:x:{{end}} Application *{{.app.metadata.name}}* sync has failed.
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+      send: [app-deployed]
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [app-health-degraded]
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Error', 'Failed']
+      send: [app-sync-failed]
+  subscriptions: |
+    - recipients:
+      - slack:ask-maas-alerts
+      triggers:
+      - on-deployed
+      - on-health-degraded
+      - on-sync-failed
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-notifications-secret
+  namespace: openshift-gitops
+type: Opaque
+stringData:
+  slack-token: "xoxb-your-slack-token"

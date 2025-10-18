@@ -205,3 +205,57 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Ask MaaS specific
+articles/
+temp/
+*.log
+*.tmp
+Dockerfile.simple
+*-fixed.yaml
+*-updated.yaml
+orchestrator-deployment-updated.yaml
+redis-simple.yaml
+redis-standalone.yaml
+
+# Environment files with secrets
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Cluster-specific configurations
+*apps.ask-maas-v12*
+*dfhf.s1.devshift.org*
+
+# Temporary deployment files
+deploy-qwen-model.sh
+quick-start.sh
+installation_path.md
+DEPLOYMENT_*.md
+IMPLEMENTATION_*.md
+
+# Node.js
+node_modules/
+.next/
+out/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

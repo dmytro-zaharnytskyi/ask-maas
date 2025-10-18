@@ -1,0 +1,236 @@
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: ask-maas-api-metrics
+  namespace: ask-maas-observability
+  labels:
+    app: ask-maas
+    component: api
+spec:
+  namespaceSelector:
+    matchNames:
+    - ask-maas-api
+  selector:
+    matchLabels:
+      app: ask-maas-orchestrator
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: ask-maas-models-metrics
+  namespace: ask-maas-observability
+  labels:
+    app: ask-maas
+    component: models
+spec:
+  namespaceSelector:
+    matchNames:
+    - ask-maas-models
+  selector:
+    matchLabels:
+      app: tei-embeddings
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: ask-maas-reranker-metrics
+  namespace: ask-maas-observability
+  labels:
+    app: ask-maas
+    component: models
+spec:
+  namespaceSelector:
+    matchNames:
+    - ask-maas-models
+  selector:
+    matchLabels:
+      app: tei-reranker
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: ask-maas-vllm-metrics
+  namespace: ask-maas-observability
+  labels:
+    app: ask-maas
+    component: models
+spec:
+  namespaceSelector:
+    matchNames:
+    - ask-maas-models
+  selector:
+    matchLabels:
+      app: vllm-model
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ask-maas-alerts
+  namespace: ask-maas-observability
+  labels:
+    app: ask-maas
+    prometheus: kube-prometheus
+spec:
+  groups:
+  - name: ask-maas.performance
+    interval: 30s
+    rules:
+    - alert: HighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(ask_maas_request_duration_seconds_bucket[5m])
+        ) > 5
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: High API latency detected
+        description: "95th percentile latency is {{ $value }}s (threshold: 5s)"
+    
+    - alert: HighErrorRate
+      expr: |
+        rate(ask_maas_requests_total{status=~"5.."}[5m]) 
+        / rate(ask_maas_requests_total[5m]) > 0.02
+      for: 5m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: High error rate detected
+        description: "Error rate is {{ $value | humanizePercentage }} (threshold: 2%)"
+    
+    - alert: GPUMemoryHigh
+      expr: |
+        nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        component: gpu
+      annotations:
+        summary: GPU memory usage high
+        description: "GPU memory usage is {{ $value | humanizePercentage }}"
+    
+    - alert: ModelQueueBacklog
+      expr: |
+        vllm_request_queue_length > 10
+      for: 2m
+      labels:
+        severity: warning
+        component: vllm
+      annotations:
+        summary: Model serving queue backlog
+        description: "Queue length is {{ $value }} requests"
+    
+    - alert: CacheMissRateHigh
+      expr: |
+        rate(ask_maas_cache_misses_total[5m]) 
+        / (rate(ask_maas_cache_hits_total[5m]) + rate(ask_maas_cache_misses_total[5m])) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: High cache miss rate
+        description: "Cache miss rate is {{ $value | humanizePercentage }}"
+    
+    - alert: FirstTokenLatencyHigh
+      expr: |
+        histogram_quantile(0.95,
+          rate(ask_maas_first_token_latency_seconds_bucket[5m])
+        ) > 1.5
+      for: 5m
+      labels:
+        severity: warning
+        component: llm
+      annotations:
+        summary: High first token latency
+        description: "95th percentile first token latency is {{ $value }}s"
+
+  - name: ask-maas.availability
+    interval: 30s
+    rules:
+    - alert: APIDown
+      expr: up{job="ask-maas-orchestrator"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: API service is down
+        description: "Ask MaaS API has been down for more than 1 minute"
+    
+    - alert: ModelServiceDown
+      expr: up{job=~"tei-.*|vllm-.*"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: models
+      annotations:
+        summary: Model service is down
+        description: "Model service {{ $labels.job }} is down"
+    
+    - alert: RedisDown
+      expr: up{job="redis"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: cache
+      annotations:
+        summary: Redis cache is down
+        description: "Redis cache service has been down for more than 1 minute"
+
+  - name: ask-maas.resources
+    interval: 30s
+    rules:
+    - alert: PodMemoryHigh
+      expr: |
+        container_memory_usage_bytes{namespace=~"ask-maas-.*"} 
+        / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        component: resources
+      annotations:
+        summary: Pod memory usage high
+        description: "Pod {{ $labels.pod }} memory usage is {{ $value | humanizePercentage }}"
+    
+    - alert: PodCPUHigh
+      expr: |
+        rate(container_cpu_usage_seconds_total{namespace=~"ask-maas-.*"}[5m]) > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        component: resources
+      annotations:
+        summary: Pod CPU usage high
+        description: "Pod {{ $labels.pod }} CPU usage is {{ $value | humanizePercentage }}"
+    
+    - alert: PersistentVolumeSpaceLow
+      expr: |
+        kubelet_volume_stats_available_bytes{namespace=~"ask-maas-.*"} 
+        / kubelet_volume_stats_capacity_bytes < 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: storage
+      annotations:
+        summary: PV space running low
+        description: "PV {{ $labels.persistentvolumeclaim }} has {{ $value | humanizePercentage }} space remaining"

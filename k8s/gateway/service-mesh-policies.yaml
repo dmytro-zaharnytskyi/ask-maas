@@ -1,0 +1,267 @@
+# PeerAuthentication for mTLS between services
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ask-maas-mtls
+  namespace: ask-maas-gateway
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ask-maas-mtls
+  namespace: ask-maas-api
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ask-maas-mtls
+  namespace: ask-maas-models
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ask-maas-mtls
+  namespace: ask-maas-frontend
+spec:
+  mtls:
+    mode: STRICT
+---
+# DestinationRule for service communication
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: ask-maas-orchestrator-dr
+  namespace: ask-maas-api
+spec:
+  host: ask-maas-orchestrator-service.ask-maas-api.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: tei-embeddings-dr
+  namespace: ask-maas-models
+spec:
+  host: tei-embeddings-service.ask-maas-models.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 50
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: tei-reranker-dr
+  namespace: ask-maas-models
+spec:
+  host: tei-reranker-service.ask-maas-models.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 50
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: vllm-model-dr
+  namespace: ask-maas-models
+spec:
+  host: mistral-7b-instruct-awq-predictor-default.ask-maas-models.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 20
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 20
+    timeout:
+      tcp:
+        connectTimeout: 10s
+---
+# VirtualService for traffic management
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ask-maas-api-vs
+  namespace: ask-maas-api
+spec:
+  hosts:
+  - ask-maas-orchestrator-service.ask-maas-api.svc.cluster.local
+  http:
+  - match:
+    - headers:
+        x-request-type:
+          exact: priority
+    route:
+    - destination:
+        host: ask-maas-orchestrator-service.ask-maas-api.svc.cluster.local
+      weight: 100
+    timeout: 60s
+  - route:
+    - destination:
+        host: ask-maas-orchestrator-service.ask-maas-api.svc.cluster.local
+      weight: 100
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Authorization Policy for service-to-service communication
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ask-maas-api-authz
+  namespace: ask-maas-api
+spec:
+  selector:
+    matchLabels:
+      app: ask-maas-orchestrator
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["ask-maas-gateway"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/v1/*"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ask-maas-models-authz
+  namespace: ask-maas-models
+spec:
+  selector:
+    matchLabels:
+      app: tei-embeddings
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["ask-maas-api"]
+    to:
+    - operation:
+        methods: ["POST"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ask-maas-reranker-authz
+  namespace: ask-maas-models
+spec:
+  selector:
+    matchLabels:
+      app: tei-reranker
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["ask-maas-api"]
+    to:
+    - operation:
+        methods: ["POST"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ask-maas-vllm-authz
+  namespace: ask-maas-models
+spec:
+  selector:
+    matchLabels:
+      app: vllm-model
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["ask-maas-api"]
+    to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/v1/completions", "/v1/chat/completions"]
+---
+# Network Policy for additional security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ask-maas-api-network-policy
+  namespace: ask-maas-api
+spec:
+  podSelector:
+    matchLabels:
+      app: ask-maas-orchestrator
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ask-maas-gateway
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: ask-maas-models
+    ports:
+    - protocol: TCP
+      port: 8080
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 443

@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ask-maas-models
+  labels:
+    name: ask-maas-models
+    istio-injection: enabled
+    project: ask-maas
+  annotations:
+    openshift.io/description: "Model serving infrastructure for Ask MaaS (vLLM, TEI)"
+    openshift.io/display-name: "Ask MaaS - Models"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ask-maas-api
+  labels:
+    name: ask-maas-api
+    istio-injection: enabled
+    project: ask-maas
+  annotations:
+    openshift.io/description: "Orchestrator API, FAISS indexing, and core services"
+    openshift.io/display-name: "Ask MaaS - API"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ask-maas-gateway
+  labels:
+    name: ask-maas-gateway
+    istio-injection: enabled
+    project: ask-maas
+  annotations:
+    openshift.io/description: "Kuadrant gateway, routes, and rate limiting"
+    openshift.io/display-name: "Ask MaaS - Gateway"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ask-maas-frontend
+  labels:
+    name: ask-maas-frontend
+    istio-injection: enabled
+    project: ask-maas
+  annotations:
+    openshift.io/description: "Ghost Article Site and chat widget"
+    openshift.io/display-name: "Ask MaaS - Frontend"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ask-maas-observability
+  labels:
+    name: ask-maas-observability
+    project: ask-maas
+  annotations:
+    openshift.io/description: "Monitoring, logging, and observability stack"
+    openshift.io/display-name: "Ask MaaS - Observability"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ask-maas-cicd
+  labels:
+    name: ask-maas-cicd
+    project: ask-maas
+  annotations:
+    openshift.io/description: "CI/CD pipelines and GitOps configurations"
+    openshift.io/display-name: "Ask MaaS - CI/CD"

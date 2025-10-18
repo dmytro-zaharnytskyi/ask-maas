@@ -1,0 +1,202 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ask-maas-orchestrator
+  namespace: ask-maas-api
+  labels:
+    app: ask-maas-orchestrator
+    component: api
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ask-maas-orchestrator
+  template:
+    metadata:
+      labels:
+        app: ask-maas-orchestrator
+        component: api
+        version: v1
+        sidecar.istio.io/inject: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ask-maas-api-sa
+      containers:
+      - name: orchestrator
+        image: image-registry.openshift-image-registry.svc:5000/ask-maas-api/orchestrator-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: REDIS_HOST
+          value: "redis-service.ask-maas-api.svc.cluster.local"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        - name: VLLM_URL
+          value: "http://vllm-llama-service.ask-maas-models.svc.cluster.local:8080"
+        - name: TEI_EMBEDDINGS_URL
+          value: "http://tei-embeddings-service.ask-maas-models.svc.cluster.local:8080"
+        - name: TEI_RERANKER_URL
+          value: "http://tei-reranker-service.ask-maas-models.svc.cluster.local:8080"
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-credentials
+              key: token
+              optional: true
+        - name: OTEL_ENABLED
+          value: "true"
+        - name: OTEL_ENDPOINT
+          value: "http://otel-collector.ask-maas-observability.svc.cluster.local:4317"
+        - name: MAX_TOKENS
+          value: "512"
+        - name: TEMPERATURE
+          value: "0.3"
+        - name: VLLM_MODEL_NAME
+          value: "llama3-8b-instruct"
+        - name: MAX_CONTEXT_LENGTH
+          value: "8192"
+        - name: RETRIEVAL_TOP_K
+          value: "50"
+        - name: RERANK_TOP_K
+          value: "10"
+        - name: MIN_RERANK_SCORE
+          value: "0.3"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: ask-maas-api-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ask-maas-orchestrator
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ask-maas-orchestrator-service
+  namespace: ask-maas-api
+  labels:
+    app: ask-maas-orchestrator
+spec:
+  type: ClusterIP
+  selector:
+    app: ask-maas-orchestrator
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ask-maas-api-sa
+  namespace: ask-maas-api
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ask-maas-api-config
+  namespace: ask-maas-api
+data:
+  system_prompt.txt: |
+    You are a helpful AI assistant for developer.redhat.com articles. 
+    Your role is to answer questions ONLY based on the provided context from the article and its related resources.
+    
+    Guidelines:
+    1. Answer ONLY from the provided context
+    2. Always include citations with section anchors or line numbers
+    3. If the context doesn't contain enough information, say so and suggest checking the relevant sections
+    4. Format code blocks properly with language tags
+    5. Be concise but thorough
+    6. Do not make assumptions beyond what's in the context
+  
+  abstain_message.txt: |
+    I don't have enough information in the current article to answer this question. 
+    Please check these relevant sections of the article:
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ask-maas-orchestrator-hpa
+  namespace: ask-maas-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ask-maas-orchestrator
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30

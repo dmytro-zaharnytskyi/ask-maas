@@ -1,0 +1,185 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-llama3-8b
+  namespace: ask-maas-models
+  labels:
+    app: vllm-model
+    model: llama3-8b
+    component: model-serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-model
+      model: llama3-8b
+  template:
+    metadata:
+      labels:
+        app: vllm-model
+        model: llama3-8b
+        component: model-serving
+    spec:
+      serviceAccountName: vllm-sa
+      containers:
+      - name: vllm-runtime
+        image: vllm/vllm-openai:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+        args:
+          # Using Llama 3.1 8B Instruct AWQ for better compatibility
+          - --model
+          - hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
+          - --quantization
+          - awq
+          - --dtype
+          - auto
+          - --port
+          - "8080"
+          - --served-model-name
+          - llama3-8b-instruct
+          - --trust-remote-code
+          - --download-dir
+          - /models-cache
+          # Conservative settings for L40S
+          - --gpu-memory-utilization
+          - "0.85"
+          - --max-model-len
+          - "8192"
+          - --max-num-seqs
+          - "32"
+          - --max-num-batched-tokens
+          - "8192"
+          # Performance optimizations
+          - --enable-prefix-caching
+          - --disable-log-stats
+          - --swap-space
+          - "4"
+        env:
+        - name: VLLM_WORKER_MULTIPROC_METHOD
+          value: "spawn"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        # Use /tmp for all cache directories
+        - name: TRANSFORMERS_CACHE
+          value: "/tmp/transformers-cache"
+        - name: HF_HOME
+          value: "/tmp/hf-home"
+        - name: HOME
+          value: "/tmp"
+        - name: VLLM_CACHE_DIR
+          value: "/tmp/vllm-cache"
+        - name: FLASHINFER_CACHE_DIR
+          value: "/tmp/flashinfer-cache"
+        # Disable compilation to avoid issues
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "max_split_size_mb:512,expandable_segments:True"
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        # Set CUDA arch for L40S (8.9)
+        - name: TORCH_CUDA_ARCH_LIST
+          value: "8.9"
+        resources:
+          requests:
+            cpu: "2"
+            memory: "10Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "12Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models-cache
+          - name: shm
+            mountPath: /dev/shm
+          - name: tmp-cache
+            mountPath: /tmp
+        ports:
+          - containerPort: 8080
+            name: http
+            protocol: TCP
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 20
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 600
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: vllm-model-cache-llama
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+        - name: tmp-cache
+          emptyDir:
+            sizeLimit: 10Gi
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: nvidia.com/gpu.present
+                operator: In
+                values:
+                - "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-model-cache-llama
+  namespace: ask-maas-models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: gp3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-llama-service
+  namespace: ask-maas-models
+  labels:
+    app: vllm-model
+    model: llama3-8b
+spec:
+  selector:
+    app: vllm-model
+    model: llama3-8b
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP

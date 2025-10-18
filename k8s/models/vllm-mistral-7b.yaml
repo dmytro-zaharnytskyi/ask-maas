@@ -1,0 +1,192 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: mistral-7b-instruct-awq
+  namespace: ask-maas-models
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    serving.kserve.io/enable-prometheus-scraping: "true"
+  labels:
+    app: vllm-model
+    model: mistral-7b
+    quantization: awq-4bit
+spec:
+  predictor:
+    serviceAccountName: kserve-service-account
+    minReplicas: 1
+    maxReplicas: 2
+    scaleTarget: 5  # Target 5 concurrent requests per replica
+    scaleMetric: concurrency
+    containerConcurrency: 10
+    timeout: 300
+    containers:
+    - name: vllm-runtime
+      image: vllm/vllm-openai:v0.5.0.post1
+      command:
+        - python
+        - -m
+        - vllm.entrypoints.openai.api_server
+      args:
+        - --model
+        - TheBloke/Mistral-7B-Instruct-v0.2-AWQ
+        - --quantization
+        - awq
+        - --dtype
+        - auto
+        - --port
+        - "8080"
+        - --served-model-name
+        - mistral-7b-instruct
+        - --trust-remote-code
+        - --download-dir
+        - /models-cache
+        - --gpu-memory-utilization
+        - "0.9"
+        - --max-model-len
+        - "8192"
+        - --max-num-seqs
+        - "256"
+        - --enforce-eager
+        - --enable-prefix-caching
+        - --disable-log-stats
+      env:
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface-credentials
+              key: token
+              optional: true
+        - name: VLLM_WORKER_MULTIPROC_METHOD
+          value: "spawn"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: TRANSFORMERS_CACHE
+          value: "/models-cache"
+        - name: HF_HOME
+          value: "/models-cache"
+      resources:
+        requests:
+          cpu: "4"
+          memory: "14Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: "16Gi"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: model-cache
+          mountPath: /models-cache
+        - name: shm
+          mountPath: /dev/shm
+      ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 300
+        periodSeconds: 30
+        timeoutSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: vllm-model-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 8Gi
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: node-role.kubernetes.io/gpu
+              operator: In
+              values:
+              - "true"
+            - key: nvidia.com/gpu.accelerator
+              operator: In
+              values:
+              - tesla-t4
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - vllm-model
+            topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-model-cache
+  namespace: ask-maas-models
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: ocs-storagecluster-cephfs  # Adjust based on your storage class
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mistral-7b-hpa
+  namespace: ask-maas-models
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mistral-7b-instruct-awq-predictor-default
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+  - type: Resource
+    resource:
+      name: nvidia.com/gpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: vllm_request_queue_length
+      target:
+        type: AverageValue
+        averageValue: "10"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: huggingface-credentials
+  namespace: ask-maas-models
+type: Opaque
+stringData:
+  token: ""  # Add HF token if needed for gated models

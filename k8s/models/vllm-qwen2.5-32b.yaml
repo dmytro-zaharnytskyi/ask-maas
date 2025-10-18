@@ -1,0 +1,232 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen25-32b
+  namespace: ask-maas-models
+  labels:
+    app: vllm-model
+    model: qwen25-32b
+    component: model-serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-model
+      model: qwen25-32b
+  template:
+    metadata:
+      labels:
+        app: vllm-model
+        model: qwen25-32b
+        component: model-serving
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: vllm-sa
+      containers:
+      - name: vllm-runtime
+        image: vllm/vllm-openai:latest  # Using latest for Qwen 2.5 support
+        imagePullPolicy: IfNotPresent
+        command:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+        args:
+          # Qwen 2.5 32B with AWQ quantization for L40S GPU
+          - --model
+          - Qwen/Qwen2.5-32B-Instruct-AWQ  # Official AWQ quantized version
+          - --quantization
+          - awq
+          - --dtype
+          - auto
+          - --port
+          - "8080"
+          - --served-model-name
+          - qwen25-32b-instruct
+          - --trust-remote-code
+          - --download-dir
+          - /models-cache
+          # Optimized for L40S with 46GB VRAM
+          - --gpu-memory-utilization
+          - "0.90"  # Use 90% of 46GB = ~41GB for model
+          - --max-model-len
+          - "32768"  # Full 32K context window
+          - --max-num-seqs
+          - "64"     # Good batch size for L40S
+          - --max-num-batched-tokens
+          - "32768"
+          # Performance optimizations for Qwen
+          - --enable-prefix-caching
+          - --enable-chunked-prefill
+          - --swap-space
+          - "8"  # 8GB swap space
+          - --kv-cache-dtype
+          - "auto"
+          # Qwen-specific optimizations
+          - --tokenizer-mode
+          - "auto"
+          - --tensor-parallel-size
+          - "1"  # Single GPU
+        env:
+        - name: VLLM_WORKER_MULTIPROC_METHOD
+          value: "spawn"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: TRANSFORMERS_CACHE
+          value: "/tmp/transformers-cache"
+        - name: HF_HOME
+          value: "/tmp/hf-home"
+        - name: HOME
+          value: "/tmp"
+        - name: VLLM_CACHE_DIR
+          value: "/tmp/vllm-cache"
+        - name: FLASHINFER_CACHE_DIR
+          value: "/tmp/flashinfer-cache"
+          # L40S Ada Lovelace optimizations
+          - name: PYTORCH_CUDA_ALLOC_CONF
+            value: "max_split_size_mb:1024,expandable_segments:True"
+          - name: TOKENIZERS_PARALLELISM
+            value: "true"
+          - name: VLLM_ATTENTION_BACKEND
+            value: "FLASH_ATTN"  # FlashAttention for Ada Lovelace
+          - name: RAY_memory_monitor_refresh_ms
+            value: "0"
+          # Better performance on L40S
+          - name: CUDA_LAUNCH_BLOCKING
+            value: "0"
+          - name: NCCL_P2P_DISABLE
+            value: "1"
+        resources:
+          requests:
+            cpu: "3"
+            memory: "24Gi"   # Need substantial system memory
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "28Gi"   # Use most of the 29GB available
+            nvidia.com/gpu: "1"
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models-cache
+          - name: shm
+            mountPath: /dev/shm
+          - name: tmp-cache
+            mountPath: /tmp
+        ports:
+          - containerPort: 8080
+            name: http
+            protocol: TCP
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 180  # Qwen 32B needs time to load
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 30  # Allow up to 15 minutes for startup
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: vllm-model-cache-qwen
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: tmp-cache
+          emptyDir:
+            sizeLimit: 10Gi  # Substantial shared memory for Qwen
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: nvidia.com/gpu.present
+                operator: In
+                values:
+                - "true"
+              - key: nvidia.com/gpu.product
+                operator: In
+                values:
+                - NVIDIA-L40S  # Target L40S specifically
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical  # Ensure model pod gets priority
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-model-cache-qwen
+  namespace: ask-maas-models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi  # Qwen 2.5 32B needs substantial storage
+  storageClassName: gp3  # Using default gp3 storage class
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-qwen-service
+  namespace: ask-maas-models
+  labels:
+    app: vllm-model
+    model: qwen25-32b
+spec:
+  selector:
+    app: vllm-model
+    model: qwen25-32b
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qwen25-32b-hpa
+  namespace: ask-maas-models
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-qwen25-32b
+  minReplicas: 1
+  maxReplicas: 1  # Single GPU node, can't scale beyond 1
+  metrics:
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 85
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
