@@ -34,15 +34,18 @@ RUN useradd -m -u 1001 -s /bin/bash askmaas
 # Set working directory
 WORKDIR /app
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local /home/askmaas/.local
+# Copy Python packages from builder (with proper ownership)
+COPY --from=builder --chown=askmaas:askmaas /root/.local /home/askmaas/.local
 
 # Copy application code
 COPY --chown=askmaas:askmaas . .
 
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
+
 # Set Python path
 ENV PATH=/home/askmaas/.local/bin:$PATH \
-    PYTHONPATH=/app \
+    PYTHONPATH=/app:/home/askmaas/.local/lib/python3.11/site-packages \
     PYTHONUNBUFFERED=1
 
 # Switch to non-root user
@@ -56,4 +59,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+ENTRYPOINT ["/bin/bash", "/app/entrypoint.sh"]

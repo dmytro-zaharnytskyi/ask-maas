@@ -13,6 +13,7 @@ import httpx
 import structlog
 
 from app.services.config import Settings
+# from app.services.vectordb import VectorDBService  # Disabled for now
 
 logger = structlog.get_logger()
 
@@ -25,6 +26,7 @@ class IngestService:
         self.settings = settings
         self.http_client = httpx.AsyncClient(timeout=30.0)
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        # self.vectordb = VectorDBService(url=settings.QDRANT_URL)  # Disabled for now
     
     async def fetch_page(self, page_url: str) -> Optional[Dict]:
         """
@@ -362,30 +364,43 @@ class IngestService:
     
     async def generate_embeddings(self, chunks: List[Dict]) -> np.ndarray:
         """
-        Generate embeddings for chunks
+        Generate embeddings for chunks - optimized for batch processing
         """
         embeddings = []
+        batch_size = 10  # Process in batches for better performance
         
-        for chunk in chunks:
+        # Process chunks in batches
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i+batch_size]
+            batch_texts = [chunk["text"] for chunk in batch]
+            
             try:
+                # Send batch request
                 response = await self.http_client.post(
                     f"{self.settings.TEI_EMBEDDINGS_URL}/embed",
-                    json={"inputs": [chunk["text"]]}
+                    json={"inputs": batch_texts},
+                    timeout=30.0
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
-                    if result and len(result) > 0:
-                        embeddings.append(result[0])
+                    if result and len(result) == len(batch_texts):
+                        embeddings.extend(result)
                     else:
-                        # Use zero vector as fallback
-                        embeddings.append([0.0] * 768)
+                        # Fallback for this batch
+                        embeddings.extend([[0.0] * 768 for _ in batch])
+                        logger.warning(f"Embedding batch size mismatch: expected {len(batch_texts)}, got {len(result) if result else 0}")
                 else:
-                    embeddings.append([0.0] * 768)
+                    embeddings.extend([[0.0] * 768 for _ in batch])
+                    logger.error(f"Failed to generate embeddings batch: HTTP {response.status_code}")
                     
             except Exception as e:
-                logger.error("Failed to generate embedding", error=str(e))
-                embeddings.append([0.0] * 768)
+                logger.error(f"Failed to generate embedding batch: {str(e)}")
+                embeddings.extend([[0.0] * 768 for _ in batch])
+        
+        # Store embeddings in chunks for later retrieval
+        for chunk, embedding in zip(chunks, embeddings):
+            chunk["embedding"] = embedding
         
         return np.array(embeddings, dtype=np.float32)
     

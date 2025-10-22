@@ -3,37 +3,41 @@
 import React, { useState, useEffect } from 'react';
 import RedHatArticleViewer from '@/components/RedHatArticleViewer';
 
-// Define available articles
-const ARTICLES = [
-  {
-    id: 'gpu-slicing',
-    title: 'Dynamic GPU slicing with Red Hat OpenShift and NVIDIA MIG',
-    description: 'Why run one AI model when you can run ten?',
-    author: 'Harshal Patil',
-    date: 'October 14, 2025',
-    path: '/static-articles/Dynamic GPU slicing with Red Hat OpenShift and NVIDIA MIG _ Red Hat Developer.html',
-  },
-  {
-    id: 'knowledge-portal',
-    title: 'How to deploy the Offline Knowledge Portal on OpenShift',
-    description: 'Deploy a comprehensive knowledge management system on OpenShift',
-    author: 'Red Hat Team',
-    date: 'October 14, 2025',
-    path: '/static-articles/How to deploy the Offline Knowledge Portal on OpenShift _ Red Hat Developer.html',
-  }
-];
+interface Article {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  author: string;
+  date: string;
+  filename: string;
+  path: string;
+}
 
 export default function Home() {
-  const [selectedArticle, setSelectedArticle] = useState<typeof ARTICLES[0] | null>(null);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [showArticleList, setShowArticleList] = useState(true);
+  const [loading, setLoading] = useState(true);
 
-  // Auto-select first article for demo
+  // Load articles from API
   useEffect(() => {
-    if (ARTICLES.length > 0 && !selectedArticle) {
-      // Auto-select GPU article for demo
-      setSelectedArticle(ARTICLES[0]);
-      setShowArticleList(false);
-    }
+    fetch('/api/articles')
+      .then(res => res.json())
+      .then(data => {
+        if (data.articles && data.articles.length > 0) {
+          setArticles(data.articles);
+          // Don't auto-select for better UX
+          setLoading(false);
+        } else {
+          console.error('No articles found');
+          setLoading(false);
+        }
+      })
+      .catch(err => {
+        console.error('Failed to load articles:', err);
+        setLoading(false);
+      });
   }, []);
 
   if (!showArticleList && selectedArticle) {
@@ -69,7 +73,7 @@ export default function Home() {
         </button>
         
         <RedHatArticleViewer
-          articlePath={selectedArticle.path}
+          articlePath={`/api${selectedArticle.path}`}
           articleTitle={selectedArticle.title}
         />
       </div>
@@ -166,12 +170,31 @@ export default function Home() {
             Available Articles
           </h2>
           
+          {loading ? (
+            <div style={{
+              textAlign: 'center',
+              padding: '60px',
+              fontSize: '18px',
+              color: '#6a6e73',
+            }}>
+              Loading articles...
+            </div>
+          ) : articles.length === 0 ? (
+            <div style={{
+              textAlign: 'center',
+              padding: '60px',
+              fontSize: '18px',
+              color: '#6a6e73',
+            }}>
+              No articles found. Please add HTML files to the articles directory.
+            </div>
+          ) : (
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))',
             gap: '30px',
           }}>
-            {ARTICLES.map((article) => (
+            {articles.map((article) => (
               <article
                 key={article.id}
                 onClick={() => {
@@ -212,7 +235,7 @@ export default function Home() {
                     fontSize: '14px',
                     color: '#6a6e73',
                   }}>
-                    <span>ARTICLE</span>
+                    <span>{article.category || 'ARTICLE'}</span>
                     <span>•</span>
                     <span>{article.date}</span>
                   </div>
@@ -266,6 +289,7 @@ export default function Home() {
               </article>
             ))}
           </div>
+          )}
           
           {/* AI Assistant Feature Card */}
           <div style={{

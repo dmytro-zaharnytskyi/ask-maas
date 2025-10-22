@@ -53,6 +53,40 @@ class CacheService:
         except Exception:
             return False
     
+    async def get_all_page_urls(self) -> List[str]:
+        """
+        Get all indexed page URLs from cache
+        
+        Returns:
+            List of page URLs that have been indexed
+        """
+        try:
+            # Get all keys matching the index pattern
+            pattern = "ask-maas:index:*:latest"
+            keys = await self.redis_client.keys(pattern)
+            
+            # Extract page URLs from keys
+            page_urls = []
+            prefix = "ask-maas:index:"
+            suffix = ":latest"
+            
+            for key in keys:
+                # Decode key if it's bytes
+                if isinstance(key, bytes):
+                    key = key.decode('utf-8')
+                
+                # Extract URL from key
+                if key.startswith(prefix) and key.endswith(suffix):
+                    url = key[len(prefix):-len(suffix)]
+                    page_urls.append(url)
+            
+            logger.info(f"Found {len(page_urls)} indexed pages in cache")
+            return page_urls
+            
+        except Exception as e:
+            logger.error(f"Failed to get page URLs from cache: {str(e)}")
+            return []
+    
     async def get_page_index(self, page_url: str, etag: Optional[str] = None) -> Optional[Dict]:
         """
         Retrieve page index from cache

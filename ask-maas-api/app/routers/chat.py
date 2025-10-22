@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 import structlog
 
 from app.services.retrieval import RetrievalService
+from app.services.vector_retrieval import VectorRetrievalService
 from app.services.llm import LLMService
 from app.services.cache import CacheService
 from app.models.chat import ChatRequest, ChatResponse, Citation, StreamEvent
@@ -65,8 +66,8 @@ async def chat_endpoint(
     cache_service: CacheService = app.state.cache_service
     settings = app.state.settings
     
-    # Initialize services
-    retrieval_service = RetrievalService(cache_service, settings)
+    # Initialize services - use vector retrieval for semantic search
+    vector_retrieval_service = VectorRetrievalService(cache_service, settings)
     llm_service = LLMService(settings)
     
     async def generate_response() -> AsyncGenerator[str, None]:
@@ -82,28 +83,16 @@ async def chat_endpoint(
                 }
             })
             
-            # Check if page index exists in cache
-            page_index = await cache_service.get_page_index(request.page_url)
-            
-            if not page_index:
-                # Page not indexed yet
-                yield create_sse_message({
-                    "id": request_id,
-                    "type": "error",
-                    "content": "Page not indexed. Please ingest the page first.",
-                    "metadata": {"error_code": "PAGE_NOT_INDEXED"}
-                })
-                yield create_sse_message({"id": request_id, "type": "done"})
-                return
-            
-            # Perform retrieval
-            logger.info("Starting retrieval", request_id=request_id)
+            # ALWAYS perform fresh vector-based retrieval for EVERY query
+            logger.info(f"Starting FRESH vector-based semantic search for query: {request.query[:100]}", request_id=request_id)
             retrieval_start = time.time()
             
-            retrieved_chunks = await retrieval_service.retrieve(
+            # Use pure vector embeddings for semantic similarity - NO keyword matching
+            # Always search globally across ALL articles for comprehensive context
+            retrieved_chunks = await vector_retrieval_service.retrieve_with_vectors(
                 query=request.query,
-                page_url=request.page_url,
-                page_index=page_index
+                top_k=10,  # Get more chunks for better context
+                similarity_threshold=0.1  # Lower threshold to catch more relevant content
             )
             
             retrieval_time = time.time() - retrieval_start
@@ -115,10 +104,27 @@ async def chat_endpoint(
             )
             
             # Check if we have enough evidence
-            if not retrieved_chunks or (
-                retrieved_chunks[0].score < settings.MIN_RERANK_SCORE
-            ):
-                # Low confidence - abstain
+            if not retrieved_chunks:
+                logger.warning("No chunks retrieved for query", request_id=request_id)
+                yield create_sse_message({
+                    "id": request_id,
+                    "type": "text",
+                    "content": "I couldn't find relevant information to answer your question. Please try rephrasing or asking about a different topic."
+                })
+                yield create_sse_message({"id": request_id, "type": "done"})
+                return
+            
+            # Log retrieved chunks for debugging
+            logger.info(
+                "Retrieved chunks from pages",
+                request_id=request_id,
+                chunks_count=len(retrieved_chunks),
+                top_scores=[chunk.score for chunk in retrieved_chunks[:3]],
+                pages=[chunk.metadata.get("page_title", "Unknown") for chunk in retrieved_chunks[:3]]
+            )
+            
+            # Only abstain if confidence is very low
+            if retrieved_chunks[0].score < 0.05:  # Very low threshold
                 yield create_sse_message({
                     "id": request_id,
                     "type": "text",
@@ -126,21 +132,20 @@ async def chat_endpoint(
                 })
                 
                 # Send top links as citations
-                if retrieved_chunks:
-                    citations = [
-                        Citation(
-                            text=chunk.text[:200] + "...",
-                            url=chunk.url,
-                            title=chunk.title,
-                            score=chunk.score
-                        )
-                        for chunk in retrieved_chunks[:3]
-                    ]
-                    yield create_sse_message({
-                        "id": request_id,
-                        "type": "citation",
-                        "citations": [c.dict() for c in citations]
-                    })
+                citations = [
+                    Citation(
+                        text=chunk.text[:200] + "...",
+                        url=chunk.url,
+                        title=chunk.title or chunk.metadata.get("page_title", "Article"),
+                        score=chunk.score
+                    )
+                    for chunk in retrieved_chunks[:3]
+                ]
+                yield create_sse_message({
+                    "id": request_id,
+                    "type": "citation",
+                    "citations": [c.dict() for c in citations]
+                })
                 
                 yield create_sse_message({"id": request_id, "type": "done"})
                 return
@@ -150,7 +155,7 @@ async def chat_endpoint(
             generation_start = time.time()
             
             # Prepare context from retrieved chunks
-            context = retrieval_service.format_context(retrieved_chunks)
+            context = vector_retrieval_service.format_context(retrieved_chunks)
             
             # Stream tokens from LLM
             token_count = 0
@@ -186,8 +191,8 @@ async def chat_endpoint(
             
             generation_time = time.time() - generation_start
             
-            # Extract and send citations
-            citations = extract_citations(accumulated_text, retrieved_chunks)
+            # Extract and send citations with proper article attribution
+            citations = extract_citations_with_context(accumulated_text, retrieved_chunks)
             if citations:
                 yield create_sse_message({
                     "id": request_id,
@@ -267,24 +272,33 @@ def create_sse_message(data: Dict) -> str:
     return json.dumps(data)
 
 
-def extract_citations(text: str, chunks: List) -> List[Citation]:
+def extract_citations_with_context(text: str, chunks: List) -> List[Citation]:
     """
-    Extract citations from generated text
-    This is a simple implementation - could be enhanced with NLP
+    Extract citations with proper article context
     """
     citations = []
+    seen_pages = set()
     
-    # Look for citation patterns in text (e.g., [1], [2], etc.)
-    # For MVP, we'll just use the top chunks as citations
-    for i, chunk in enumerate(chunks[:3]):
+    # Use top chunks as citations, ensuring diversity across articles
+    for chunk in chunks[:5]:
+        page_title = chunk.metadata.get("page_title", chunk.title or "Article")
+        
+        # Skip if we already have a citation from this page
+        if page_title in seen_pages and len(citations) >= 3:
+            continue
+        
         citations.append(
             Citation(
-                text=chunk.text[:200] + "...",
+                text=chunk.text[:250] + "...",
                 url=chunk.url,
-                title=chunk.title or f"Section {i+1}",
+                title=page_title,
                 score=chunk.score
             )
         )
+        seen_pages.add(page_title)
+        
+        if len(citations) >= 3:
+            break
     
     return citations
 

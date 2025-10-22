@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qdrant-config
+  namespace: ask-maas-models
+data:
+  config.yaml: |
+    log_level: INFO
+    
+    storage:
+      # Optimal for performance
+      storage_path: /qdrant/storage
+      optimizers_config:
+        indexing_threshold_kb: 20000
+        memmap_threshold_kb: 200000
+        default_segment_number: 4
+      
+      # Performance settings
+      performance:
+        max_search_threads: 0  # Use all available cores
+        max_optimization_threads: 0
+    
+    service:
+      http_port: 6333
+      grpc_port: 6334
+      enable_cors: true
+      
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-storage
+  namespace: ask-maas-models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+      
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: ask-maas-models
+  labels:
+    app: qdrant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:v1.7.4
+        ports:
+        - containerPort: 6333
+          name: http
+          protocol: TCP
+        - containerPort: 6334
+          name: grpc
+          protocol: TCP
+        volumeMounts:
+        - name: storage
+          mountPath: /qdrant/storage
+        - name: config
+          mountPath: /qdrant/config
+        env:
+        - name: QDRANT__LOG_LEVEL
+          value: INFO
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: qdrant-storage
+      - name: config
+        configMap:
+          name: qdrant-config
+          
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-service
+  namespace: ask-maas-models
+  labels:
+    app: qdrant
+spec:
+  type: ClusterIP
+  selector:
+    app: qdrant
+  ports:
+    - port: 6333
+      targetPort: 6333
+      name: http
+      protocol: TCP
+    - port: 6334
+      targetPort: 6334
+      name: grpc
+      protocol: TCP
+

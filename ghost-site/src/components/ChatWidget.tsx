@@ -74,7 +74,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
 
     // Auto-ingest the article when widget loads
     const ingestArticle = async () => {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ask-maas-api-ask-maas-api.apps.ask-maas-v12.dfhf.s1.devshift.org';
       setIsIngesting(true);
       setError(null);
       
@@ -87,8 +87,11 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
         let articleContentText = '';
         
         if (articlePath) {
-          // Use the provided article path
-          const articleResponse = await fetch(articlePath);
+          // Use the provided article path directly (it already includes /api prefix)
+          const fullArticlePath = articlePath.startsWith('http') 
+            ? articlePath 
+            : `${origin}${articlePath.startsWith('/') ? articlePath : '/' + articlePath}`;
+          const articleResponse = await fetch(fullArticlePath);
           if (articleResponse.ok) {
             const htmlContent = await articleResponse.text();
             // Parse HTML and extract article content
@@ -227,7 +230,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
     setIsLoading(true);
     setError(null);
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ask-maas-api-ask-maas-api.apps.ask-maas-v12.dfhf.s1.devshift.org';
     
     // Generate proper page URL for chat
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ask-maas-frontend.apps.ask-maas-v12.dfhf.s1.devshift.org';

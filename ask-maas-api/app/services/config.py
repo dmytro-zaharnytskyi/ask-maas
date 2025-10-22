@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     REDIS_DB: int = Field(default=0, env="REDIS_DB")
     REDIS_CACHE_TTL: int = Field(default=1800, env="REDIS_CACHE_TTL")  # 30 minutes
     
+    # Qdrant Vector Database Configuration
+    QDRANT_URL: str = Field(
+        default="qdrant-service.ask-maas-models.svc.cluster.local:6333",
+        env="QDRANT_URL"
+    )
+    
     # Model Service URLs
     VLLM_URL: str = Field(
         default="http://vllm-service.ask-maas-models.svc.cluster.local:8080",
@@ -79,11 +85,12 @@ class Settings(BaseSettings):
     MIN_CHUNK_SIZE: int = Field(default=100, env="MIN_CHUNK_SIZE")
     MAX_CHUNK_SIZE: int = Field(default=1200, env="MAX_CHUNK_SIZE")
     
-    # Retrieval Configuration
-    RETRIEVAL_TOP_K: int = Field(default=50, env="RETRIEVAL_TOP_K")
+    # Retrieval Configuration - Optimized for PURE vector search
+    RETRIEVAL_TOP_K: int = Field(default=20, env="RETRIEVAL_TOP_K")  # Reduced for faster processing
     RERANK_TOP_K: int = Field(default=10, env="RERANK_TOP_K")
-    MIN_RERANK_SCORE: float = Field(default=0.1, env="MIN_RERANK_SCORE")  # Lowered for simplified scoring
-    HYBRID_SEARCH_ALPHA: float = Field(default=0.5, env="HYBRID_SEARCH_ALPHA")  # 0=lexical, 1=dense
+    MIN_RERANK_SCORE: float = Field(default=0.05, env="MIN_RERANK_SCORE")  # Lower threshold for better recall
+    MIN_SIMILARITY_SCORE: float = Field(default=0.1, env="MIN_SIMILARITY_SCORE")  # Minimum similarity for chunks
+    # REMOVED HYBRID_SEARCH_ALPHA - we're using PURE vector search only
     
     # GitHub Configuration
     GITHUB_APP_ID: Optional[str] = Field(default=None, env="GITHUB_APP_ID")
@@ -131,11 +138,12 @@ Guidelines:
         env="ABSTAIN_MESSAGE"
     )
     
-    # Performance Tuning
-    MAX_CONTEXT_LENGTH: int = Field(default=8000, env="MAX_CONTEXT_LENGTH")
-    REQUEST_TIMEOUT: int = Field(default=30, env="REQUEST_TIMEOUT")
-    STREAM_TIMEOUT: int = Field(default=60, env="STREAM_TIMEOUT")
-    CONNECTION_POOL_SIZE: int = Field(default=10, env="CONNECTION_POOL_SIZE")
+    # Performance Tuning - Optimized for faster response
+    MAX_CONTEXT_LENGTH: int = Field(default=6000, env="MAX_CONTEXT_LENGTH")  # Reduced for faster processing
+    REQUEST_TIMEOUT: int = Field(default=20, env="REQUEST_TIMEOUT")  # Reduced timeout
+    STREAM_TIMEOUT: int = Field(default=30, env="STREAM_TIMEOUT")  # Reduced for faster failover
+    CONNECTION_POOL_SIZE: int = Field(default=20, env="CONNECTION_POOL_SIZE")  # Increased for better concurrency
+    BATCH_SIZE: int = Field(default=10, env="BATCH_SIZE")  # For batch embedding generation
     
     # Feature Flags
     ENABLE_CACHING: bool = Field(default=True, env="ENABLE_CACHING")

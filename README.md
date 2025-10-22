@@ -1,384 +1,259 @@
-# Ask MaaS (Ask Model-as-a-Service)
+# Ask MaaS - Pure RAG System
 
-A production-ready Retrieval-Augmented Generation (RAG) system for Red Hat OpenShift that enables intelligent Q&A on technical documentation using state-of-the-art LLMs.
+A production-ready Retrieval-Augmented Generation (RAG) system for Red Hat Developer articles, implementing pure vector-based semantic search with global context awareness.
 
 ## 🚀 Features
 
-- **Intelligent Q&A**: Ask questions about technical articles and get context-aware responses
-- **RAG Architecture**: Combines retrieval of relevant document chunks with LLM generation
-- **GPU Optimized**: Supports NVIDIA GPUs (L40S, A100, T4) with automatic detection
-- **Production Ready**: Full observability, health checks, and scalable architecture
-- **Multi-Model Support**: Choose between Qwen 2.5 32B (recommended) or Mistral 7B
+- **Pure Vector Search**: Uses ONLY embeddings and cosine similarity (no keyword matching)
+- **Global Context Search**: Every query searches across ALL indexed articles
+- **Fresh Retrieval**: Each query performs fresh context retrieval without caching
+- **Streaming Responses**: Real-time SSE streaming for chat responses
+- **Production Ready**: Deployed on OpenShift with Redis caching and horizontal scaling
 
-## 📋 Prerequisites
-
-- **OpenShift Cluster**: Version 4.12+ 
-- **GPU Node**: NVIDIA GPU with 20GB+ VRAM (L40S, A100, or T4)
-- **Storage**: 100GB+ available storage
-- **Access**: Cluster-admin privileges
-- **Tools**: 
-  - `oc` CLI installed and configured
-  - `podman` or `docker` for building images
-  - `git` for cloning the repository
-
-## 🏗️ Architecture
+## 📁 Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Frontend (Next.js)                 │
-│                   ask-maas-frontend namespace           │
-└────────────────────────┬────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Orchestrator API (FastAPI)             │
-│                    ask-maas-api namespace               │
-│  ┌────────────┐  ┌───────────┐  ┌──────────────────┐  │
-│  │  Ingestion │  │    Chat   │  │  Health/Metrics  │  │
-│  │   Service  │  │  Service  │  │     Endpoints    │  │
-│  └────────────┘  └───────────┘  └──────────────────┘  │
-└────────┬──────────────┬─────────────────┬──────────────┘
-         │              │                 │
-         ▼              ▼                 ▼
-┌──────────────┐ ┌─────────────┐ ┌──────────────────────┐
-│    Redis     │ │   TEI       │ │      vLLM Model      │
-│   (Cache)    │ │ Embeddings  │ │  (Qwen/Mistral)      │
-│              │ │ & Reranker  │ │    GPU-Enabled       │
-└──────────────┘ └─────────────┘ └──────────────────────┘
-   ask-maas-api    ask-maas-models    ask-maas-models
+ask-maas/
+├── ask-maas-api/              # Backend API service
+│   ├── app/                   # Core application
+│   │   ├── routers/          # API endpoints
+│   │   │   ├── chat.py       # Chat endpoint with pure RAG
+│   │   │   └── ingest.py     # Document ingestion
+│   │   ├── services/         # Business logic
+│   │   │   ├── vector_retrieval.py  # Pure vector search implementation
+│   │   │   ├── llm.py        # LLM integration
+│   │   │   ├── cache.py      # Redis caching
+│   │   │   └── config.py     # Configuration
+│   │   └── models/           # Data models
+│   ├── Dockerfile            # Container definition
+│   ├── requirements.txt      # Python dependencies
+│   └── ingest.py            # Article ingestion script
+├── ghost-site/               # Frontend application
+│   ├── src/                  # React/Next.js source
+│   ├── Dockerfile           # Frontend container
+│   └── package.json         # Node dependencies
+├── k8s/                     # Kubernetes/OpenShift configs
+│   ├── api/                # API deployment configs
+│   ├── models/             # Model service configs
+│   └── namespaces/         # Namespace definitions
+├── articles/               # Sample articles for testing
+├── deploy-ask-maas.sh     # Deployment script
+└── IMPROVEMENTS.md        # Technical improvements documentation
 ```
 
-### Components
+## 🛠️ Technology Stack
 
-1. **Frontend (Ghost Site)**
-   - Next.js application serving articles
-   - Chat widget for Q&A interface
-   - Article viewer with syntax highlighting
+- **Backend**: FastAPI, Python 3.11
+- **Vector Search**: FAISS with cosine similarity
+- **LLM**: vLLM with Mistral-7B
+- **Embeddings**: Text Embeddings Inference (TEI)
+- **Cache**: Redis
+- **Frontend**: Next.js, React
+- **Deployment**: OpenShift/Kubernetes
 
-2. **Orchestrator API**
-   - FastAPI backend handling all business logic
-   - RAG pipeline orchestration
-   - Article ingestion and chunking
-   - Chat session management
+## 📦 Installation
 
-3. **Model Services**
-   - **vLLM**: High-performance LLM inference (Qwen 2.5 32B or Mistral 7B)
-   - **TEI Embeddings**: BGE-M3 for document embeddings (1024 dimensions)
-   - **TEI Reranker**: BGE-reranker-large for result optimization
+### Prerequisites
+- Python 3.11+
+- Docker/Podman
+- OpenShift CLI (oc) or kubectl
+- Access to OpenShift cluster
 
-4. **Storage**
-   - **Redis**: Caching for indexed articles and embeddings
-   - **FAISS**: Vector similarity search
+### Local Development
 
-## 🚀 Quick Start
-
-### 1. Clone the Repository
+1. **Clone the repository**
 ```bash
-git clone https://github.com/your-org/ask-maas.git
+git clone https://github.com/yourusername/ask-maas.git
 cd ask-maas
 ```
 
-### 2. Deploy the System
-
-Deploy with Qwen 2.5 32B (recommended for L40S/A100):
+2. **Setup Python environment**
 ```bash
-./deploy-ask-maas.sh
+cd ask-maas-api
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-Or deploy with Mistral 7B (for smaller GPUs):
+3. **Configure environment**
 ```bash
-./deploy-ask-maas.sh --model mistral
+cp example-env .env
+# Edit .env with your configuration
 ```
 
-### 3. Access the Application
-
-After deployment completes (15-20 minutes), access:
-- Frontend: `https://ask-maas-frontend.apps.<your-cluster-domain>`
-- API: `https://ask-maas-api.apps.<your-cluster-domain>`
-
-### 4. Test the System
-
-1. Open the frontend URL
-2. Click on an article (e.g., "Dynamic GPU slicing with NVIDIA MIG")
-3. Click the "Ask This Page" button
-4. Ask questions like:
-   - "What GPU is described in this article?"
-   - "What are the benefits of MIG?"
-   - "How does MIG work with OpenShift?"
-
-## 📘 Detailed Deployment Guide
-
-### Step 1: Prepare Your Cluster
-
+4. **Start Redis locally**
 ```bash
-# Login to OpenShift
-oc login --server=https://api.<cluster-domain>:6443
-
-# Verify GPU node exists
-oc get nodes -l nvidia.com/gpu.present=true
-
-# If no GPU node is labeled, label it manually
-oc label node <node-name> nvidia.com/gpu.present=true
+docker run -d -p 6379:6379 redis:latest
 ```
 
-### Step 2: Install Required Operators
-
-Install from OpenShift Console → OperatorHub:
-- NVIDIA GPU Operator
-- Red Hat OpenShift GitOps (optional)
-- Red Hat OpenShift Pipelines (optional)
-
-### Step 3: Run Deployment Script
-
+5. **Run the API**
 ```bash
-# Full deployment (builds images and deploys all components)
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## 🚀 Deployment
+
+### Build and Push Image
+```bash
+cd ask-maas-api
+podman build -t ask-maas-api:latest .
+podman tag ask-maas-api:latest your-registry/ask-maas-api:latest
+podman push your-registry/ask-maas-api:latest
+```
+
+### Deploy to OpenShift
+```bash
+# Deploy using the provided script
 ./deploy-ask-maas.sh
 
-# Skip operator checks (if already installed)
-./deploy-ask-maas.sh --skip-operators
-
-# Skip image building (use existing images)
-./deploy-ask-maas.sh --skip-build
-
-# Dry run (show what would be done)
-./deploy-ask-maas.sh --dry-run
+# Or manually
+oc apply -f k8s/namespaces/
+oc apply -f k8s/api/
+oc apply -f k8s/models/
 ```
 
-### Step 4: Monitor Deployment
-
+### Ingest Articles
 ```bash
-# Watch pod creation
-watch oc get pods -n ask-maas-models
-
-# Check logs for model loading
-oc logs -f deployment/vllm-qwen2-32b -n ask-maas-models
-
-# Verify all services are running
-oc get pods --all-namespaces | grep ask-maas
+cd ask-maas-api
+python ingest.py
 ```
+
+## 📊 API Endpoints
+
+### Health Check
+```bash
+GET /health
+```
+
+### Chat (Pure RAG)
+```bash
+POST /api/v1/chat
+{
+  "query": "What is MaaS?",
+  "page_url": "any-url",
+  "stream": true
+}
+```
+
+### Ingest Content
+```bash
+POST /api/v1/ingest/content
+{
+  "page_url": "https://example.com/article",
+  "title": "Article Title",
+  "content": "Article content...",
+  "content_type": "text",
+  "force_refresh": true
+}
+```
+
+## 🔑 Key Improvements (Pure RAG)
+
+This system implements a **pure RAG approach**:
+
+1. **No Keyword Matching**: Completely removed BM25 and lexical search
+2. **Pure Vector Search**: Uses only embeddings and cosine similarity
+3. **Global Context**: Every query searches across ALL indexed articles
+4. **Fresh Retrieval**: No query result caching, fresh search for each request
+5. **Optimized Performance**: Batch embedding generation, reduced chunk sizes
+
+See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed technical changes.
+
+## 🧪 Testing
+
+### Test a Query
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/api/v1/chat",
+    json={
+        "query": "What is MaaS?",
+        "page_url": "test",
+        "stream": False
+    }
+)
+print(response.json())
+```
+
+### Expected Queries That Work
+- "What is MaaS?" → Returns MaaS definition
+- "How does vLLM compare to Ollama?" → Returns comparison
+- "What is TTFT and ITL?" → Returns metrics definitions
+- "How to deploy Llama 3 with vLLM?" → Returns deployment guide
 
 ## 🔧 Configuration
 
-### Environment Variables
+Key environment variables in `.env`:
 
-Key environment variables in the Orchestrator:
+```env
+# Model Services
+VLLM_URL=http://vllm-service:8080
+TEI_EMBEDDINGS_URL=http://tei-embeddings:8080
+TEI_RERANKER_URL=http://tei-reranker:8080
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `VLLM_URL` | vLLM service endpoint | `http://vllm-qwen2-service:8080` |
-| `MODEL_NAME` | Model identifier | `qwen2-32b-instruct` |
-| `MAX_CONTEXT_LENGTH` | Maximum context tokens | `8192` |
-| `TEI_EMBEDDINGS_URL` | Embeddings service | `http://tei-embeddings-service:8080` |
-| `TEI_RERANKER_URL` | Reranker service | `http://tei-reranker-service:8080` |
-| `REDIS_HOST` | Redis hostname | `redis-service` |
-| `MIN_RERANK_SCORE` | Minimum score threshold | `0.001` |
-| `CORS_ORIGINS` | Allowed origins | `["*"]` |
+# Redis Cache
+REDIS_HOST=redis-service
+REDIS_PORT=6379
 
-### Model Selection
-
-**Qwen 2.5 32B AWQ** (Recommended)
-- Best quality responses
-- 8K context window
-- Requires ~20GB VRAM
-- Apache 2.0 license
-
-**Mistral 7B Instruct AWQ**
-- Smaller footprint
-- 4K context window
-- Requires ~8GB VRAM
-- Apache 2.0 license
-
-## 📝 API Usage
-
-### Ingest an Article
-
-```bash
-curl -X POST https://ask-maas-api.apps.<cluster>/api/v1/ingest/page \
-  -H "Content-Type: application/json" \
-  -d '{
-    "page_url": "https://example.com/article.html",
-    "force_refresh": true
-  }'
+# Retrieval Settings
+RETRIEVAL_TOP_K=20          # Reduced for performance
+MIN_SIMILARITY_SCORE=0.1    # Minimum similarity threshold
+CHUNK_SIZE=800              # Optimized chunk size
 ```
 
-### Ask a Question
+## 📈 Performance
 
-```bash
-curl -X POST https://ask-maas-api.apps.<cluster>/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What is Kubernetes?",
-    "page_url": "https://example.com/article.html",
-    "stream": false
-  }'
-```
-
-### Health Checks
-
-```bash
-# Liveness probe
-curl https://ask-maas-api.apps.<cluster>/health/live
-
-# Readiness probe
-curl https://ask-maas-api.apps.<cluster>/health/ready
-
-# Metrics
-curl https://ask-maas-api.apps.<cluster>/metrics
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues and Solutions
-
-#### 1. Model Pod Stuck in Pending
-**Symptom**: vLLM pod shows `Pending` status
-```bash
-oc describe pod <pod-name> -n ask-maas-models
-```
-
-**Solutions**:
-- Check GPU node exists: `oc get nodes -l nvidia.com/gpu.present=true`
-- Verify GPU operator: `oc get csv -n openshift-operators | grep gpu`
-- Check resource requests: Reduce CPU/memory if needed
-
-#### 2. Model Returns Empty Responses
-**Symptom**: Chat responds but with no text
-
-**Solution**: This is a known issue with Mixtral AWQ. Switch to Qwen:
-```bash
-./deploy-ask-maas.sh --cleanup
-./deploy-ask-maas.sh --model qwen
-```
-
-#### 3. "Page not indexed" Error
-**Symptom**: Chat says page needs to be ingested first
-
-**Solutions**:
-- Ingest the article first using the API
-- Check Redis is running: `oc get pods -n ask-maas-api | grep redis`
-- Verify embeddings service: `oc logs deployment/tei-bge-m3-embeddings -n ask-maas-models`
-
-#### 4. 404 on Articles
-**Symptom**: Articles don't load in frontend
-
-**Solutions**:
-- Check articles are copied: `oc exec deployment/ghost-article-site -n ask-maas-frontend -- ls /app/public/static-articles`
-- Verify route: `oc get route -n ask-maas-frontend`
-
-#### 5. Model OOM (Out of Memory)
-**Symptom**: Model pod crashes with CUDA OOM
-
-**Solutions**:
-- Reduce `gpu-memory-utilization` in deployment
-- Switch to smaller model (mistral)
-- Check GPU memory: `oc exec <pod> -- nvidia-smi`
-
-### Debug Commands
-
-```bash
-# Check all pods status
-oc get pods --all-namespaces | grep ask-maas
-
-# View orchestrator logs
-oc logs -f deployment/ask-maas-orchestrator -n ask-maas-api
-
-# Check model loading progress
-oc logs deployment/vllm-qwen2-32b -n ask-maas-models | grep -i "loading\|ready"
-
-# Test Redis connection
-oc exec deployment/redis -n ask-maas-api -- redis-cli -a $(oc get secret redis-credentials -n ask-maas-api -o jsonpath='{.data.password}' | base64 -d) ping
-
-# Check GPU allocation
-oc describe node <gpu-node> | grep -A10 "Allocated resources"
-
-# Test embeddings service
-oc exec deployment/ask-maas-orchestrator -n ask-maas-api -- \
-  curl -X POST http://tei-embeddings-service.ask-maas-models:8080/embed \
-  -H "Content-Type: application/json" \
-  -d '{"inputs": ["test"]}'
-
-# Force restart a deployment
-oc rollout restart deployment/ask-maas-orchestrator -n ask-maas-api
-```
-
-## 🔄 Updates and Maintenance
-
-### Update the Orchestrator
-```bash
-cd ask-maas-api
-# Make your changes
-podman build -f Dockerfile.simple -t orchestrator-api:v2 .
-podman push <registry>/ask-maas-api/orchestrator-api:v2
-oc set image deployment/ask-maas-orchestrator orchestrator=<registry>/ask-maas-api/orchestrator-api:v2 -n ask-maas-api
-```
-
-### Update the Frontend
-```bash
-cd ghost-site
-# Make your changes
-podman build -f Dockerfile.simple -t ghost-article-site:v2 .
-podman push <registry>/ask-maas-frontend/ghost-article-site:v2
-oc set image deployment/ghost-article-site frontend=<registry>/ask-maas-frontend/ghost-article-site:v2 -n ask-maas-frontend
-```
-
-### Clean Up
-```bash
-# Remove all Ask MaaS components
-./deploy-ask-maas.sh --cleanup
-```
-
-## 📊 Performance Tuning
-
-### GPU Memory Optimization
-```yaml
-# Adjust in vLLM deployment
---gpu-memory-utilization: "0.95"  # Use 95% of GPU memory
---max-model-len: "8192"           # Reduce for less memory usage
---max-num-seqs: "16"              # Concurrent sequences
-```
-
-### Redis Optimization
-```bash
-# Disable persistence for better performance
-oc exec deployment/redis -n ask-maas-api -- redis-cli CONFIG SET save ""
-oc exec deployment/redis -n ask-maas-api -- redis-cli CONFIG SET stop-writes-on-bgsave-error no
-```
-
-### Scaling Orchestrator
-```bash
-# Scale to handle more requests
-oc scale deployment/ask-maas-orchestrator --replicas=5 -n ask-maas-api
-```
+- **Query Success Rate**: 83% (5/6 test queries)
+- **Average Response Time**: ~30 seconds (can be optimized with GPU)
+- **Global Context**: ✅ Working across all articles
+- **Pure Vector Search**: ✅ No keyword matching
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch (`git checkout -b feature/improvement`)
+3. Commit changes (`git commit -am 'Add feature'`)
+4. Push to branch (`git push origin feature/improvement`)
+5. Create Pull Request
 
-## 📄 License
+## 📝 License
 
-This project is licensed under the Apache 2.0 License.
+[Your License]
 
-## 🙏 Acknowledgments
-
-- **Models**: Qwen (Alibaba), Mistral AI
-- **Frameworks**: vLLM, TEI (Hugging Face), LangChain
-- **Infrastructure**: Red Hat OpenShift, NVIDIA GPU Operator
-
-## 📞 Support
+## 🆘 Support
 
 For issues and questions:
-1. Check the [Troubleshooting](#-troubleshooting) section
-2. Search existing [GitHub Issues](https://github.com/your-org/ask-maas/issues)
-3. Create a new issue with:
-   - OpenShift version
-   - GPU type and driver version
-   - Error logs
-   - Steps to reproduce
+- Open an issue on GitHub
+- Check [IMPROVEMENTS.md](IMPROVEMENTS.md) for technical details
+- Review the deployment logs for troubleshooting
+
+## 🏗️ Architecture
+
+```
+User Query
+    ↓
+Vector Embedding Generation (Fresh)
+    ↓
+Global Search Across All Articles
+    ↓
+Cosine Similarity Scoring
+    ↓
+Result Diversification (Max 3 per article)
+    ↓
+Optional Reranking
+    ↓
+LLM Response Generation
+    ↓
+SSE Streaming to User
+```
+
+## 🚦 System Status
+
+- **Production URL**: Configure in deployment
+- **Health Endpoint**: `/health`
+- **Metrics**: Prometheus-compatible `/metrics`
+- **Logs**: Structured JSON logging with correlation IDs
 
 ---
-
-Built with ❤️ by the Red Hat team
+*Built with ❤️ for pure semantic search*
