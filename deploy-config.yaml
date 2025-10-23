@@ -1,220 +1,200 @@
 # Ask MaaS Deployment Configuration
-# This file contains the tested and working configuration for Ask MaaS deployment
+# This file contains configuration options for the deployment script
 
 # Model Configuration
-models:
-  # Recommended: Qwen 2.5 32B AWQ (Best quality, fits on L40S/A100)
-  qwen:
-    enabled: true
-    image: "vllm/vllm-openai:latest"
-    model: "Qwen/Qwen2.5-32B-Instruct-AWQ"
-    quantization: "awq"
-    served_model_name: "qwen2-32b-instruct"
-    gpu_memory_utilization: "0.95"
-    max_model_len: "8192"
-    max_num_seqs: "16"
-    swap_space: "2"
-    enforce_eager: true
-    resources:
-      requests:
-        memory: "20Gi"
-        cpu: "1"
-        nvidia.com/gpu: "1"
-      limits:
-        memory: "28Gi"
-        cpu: "2"
-        nvidia.com/gpu: "1"
-    cache_dirs:
-      HF_HOME: "/tmp/hf-home"
-      HOME: "/tmp"
-      VLLM_CACHE_DIR: "/tmp/vllm-cache"
-      TORCH_CUDA_ARCH_LIST: "8.9"  # For L40S
-
-  # Alternative: Mistral 7B AWQ (Smaller, for limited GPUs)
+model:
+  # Available options: mistral, llama3, mixtral, qwen
+  type: mistral
+  
+  # Model-specific settings
   mistral:
-    enabled: false
-    image: "vllm/vllm-openai:v0.5.0.post1"
-    model: "TheBloke/Mistral-7B-Instruct-v0.2-AWQ"
-    quantization: "awq"
-    served_model_name: "mistral-7b-instruct"
-    gpu_memory_utilization: "0.85"
-    max_model_len: "4096"
-    max_num_seqs: "32"
-    resources:
-      requests:
-        memory: "8Gi"
-        cpu: "2"
-        nvidia.com/gpu: "1"
-      limits:
-        memory: "10Gi"
-        cpu: "4"
-        nvidia.com/gpu: "1"
+    name: "mistralai/Mistral-7B-Instruct-v0.3"
+    replicas: 1
+    gpu_count: 1
+    cpu_request: "2"
+    memory_request: "16Gi"
+    memory_limit: "24Gi"
+    gpu_memory: "16GB"
+  
+  llama3:
+    name: "meta-llama/Meta-Llama-3-8B-Instruct"
+    replicas: 1
+    gpu_count: 1
+    cpu_request: "2"
+    memory_request: "16Gi"
+    memory_limit: "24Gi"
+    gpu_memory: "16GB"
+  
+  mixtral:
+    name: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    replicas: 1
+    gpu_count: 2
+    cpu_request: "4"
+    memory_request: "48Gi"
+    memory_limit: "64Gi"
+    gpu_memory: "48GB"
+  
+  qwen:
+    name: "Qwen/Qwen2.5-32B-Instruct"
+    replicas: 1
+    gpu_count: 2
+    cpu_request: "8"
+    memory_request: "64Gi"
+    memory_limit: "96Gi"
+    gpu_memory: "64GB"
 
-# Embedding Services
+# Embedding Service Configuration
 embeddings:
-  tei_bge_m3:
-    enabled: true
-    image: "ghcr.io/huggingface/text-embeddings-inference:cpu-1.2"
-    model_id: "BAAI/bge-m3"
-    port: 8080
-    dimension: 1024
-    resources:
-      requests:
-        memory: "2Gi"
-        cpu: "1"
-      limits:
-        memory: "4Gi"
-        cpu: "2"
+  model: "BAAI/bge-base-en-v1.5"
+  replicas: 1
+  cpu_request: "1"
+  memory_request: "2Gi"
+  memory_limit: "4Gi"
 
-  tei_reranker:
-    enabled: true
-    image: "ghcr.io/huggingface/text-embeddings-inference:cpu-1.2"
-    model_id: "BAAI/bge-reranker-large"
-    port: 8080
-    resources:
-      requests:
-        memory: "2Gi"
-        cpu: "1"
-      limits:
-        memory: "4Gi"
-        cpu: "2"
+# Reranker Service Configuration
+reranker:
+  enabled: true
+  model: "BAAI/bge-reranker-base"
+  replicas: 1
+  cpu_request: "1"
+  memory_request: "2Gi"
+  memory_limit: "4Gi"
 
-# Orchestrator Configuration
-orchestrator:
-  replicas: 3
-  image: "orchestrator-api:latest"
-  environment:
-    ENVIRONMENT: "production"
-    MODEL_NAME: "qwen2-32b-instruct"  # CRITICAL: Must match served_model_name
-    MAX_CONTEXT_LENGTH: "8192"
-    MIN_RERANK_SCORE: "0.001"
-    CORS_ORIGINS: '["*"]'
-    OTEL_ENABLED: "false"
-    RETRIEVAL_TOP_K: "10"
-    RERANK_TOP_K: "3"
-  resources:
-    requests:
-      memory: "512Mi"
-      cpu: "100m"
-    limits:
-      memory: "1Gi"
-      cpu: "500m"
+# Vector Database Configuration
+qdrant:
+  replicas: 1
+  cpu_request: "500m"
+  memory_request: "1Gi"
+  memory_limit: "2Gi"
+  storage_size: "10Gi"
+  collection_name: "ask-maas"
+  vector_size: 768
+  distance: "Cosine"
 
-# Redis Configuration
+# Redis Cache Configuration
 redis:
-  image: "redis:7-alpine"
-  password: "${REDIS_PASSWORD}"  # Set via environment or generate during deployment
-  persistence_disabled: true  # Avoid permission issues in OpenShift
-  config:
-    save: ""  # Disable persistence
-    stop-writes-on-bgsave-error: "no"
-    maxmemory: "2gb"
-    maxmemory-policy: "allkeys-lru"
-  resources:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "2Gi"
-      cpu: "500m"
+  replicas: 1
+  cpu_request: "100m"
+  memory_request: "256Mi"
+  memory_limit: "512Mi"
+  maxmemory_policy: "allkeys-lru"
+
+# Orchestrator API Configuration
+orchestrator:
+  replicas: 2
+  cpu_request: "500m"
+  memory_request: "1Gi"
+  memory_limit: "2Gi"
+  
+  # Environment variables
+  env:
+    LOG_LEVEL: "INFO"
+    REQUEST_TIMEOUT: "60"
+    CORS_ORIGINS: '["*"]'
+    
+  # RAG settings
+  retrieval:
+    top_k: 20
+    min_similarity: 0.1
+    chunk_size: 800
+    chunk_overlap: 200
+    max_chunks_per_article: 3
+    use_reranker: false
 
 # Frontend Configuration
 frontend:
-  replicas: 1
-  image: "ghost-article-site:latest"
-  build_args:
-    NODE_ENV: "production"
-  environment:
-    NODE_ENV: "production"
-    PORT: "3000"
-  resources:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"
+  replicas: 2
+  cpu_request: "100m"
+  memory_request: "256Mi"
+  memory_limit: "512Mi"
+  node_env: "production"
+
+# Ingestion Configuration
+ingestion:
+  # Articles to ingest (relative to articles/ directory)
+  articles:
+    - filename: "All you can kustomize during the MaaS deployment _ Red Hat Developer.html"
+      title: "All you can kustomize during the MaaS deployment"
+    - filename: "What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html"
+      title: "What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift"
+    - filename: "Deploy Llama 3 8B with vLLM _ Red Hat Developer.html"
+      title: "Deploy Llama 3 8B with vLLM"
+    - filename: "Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html"
+      title: "Ollama vs. vLLM: A deep dive into performance benchmarking"
+    - filename: "Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html"
+      title: "Profiling vLLM Inference Server with GPU acceleration on RHEL"
+  
+  # Ingestion settings
+  max_content_length: 50000
+  batch_size: 5
+  retry_attempts: 3
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    enabled: false
+    scrape_interval: "30s"
+  
+  grafana:
+    enabled: false
+    admin_password: "admin"
+  
+  metrics:
+    enabled: true
+    port: 9090
 
 # Network Configuration
-routes:
-  api:
-    timeout: "60s"
-    tls:
-      termination: "edge"
-      insecureEdgeTerminationPolicy: "Redirect"
+network:
+  # Route configuration
+  routes:
+    api_subdomain: "ask-maas-api"
+    frontend_subdomain: "ask-maas-frontend"
+    tls_enabled: true
   
-  frontend:
-    timeout: "30s"
-    tls:
-      termination: "edge"
-      insecureEdgeTerminationPolicy: "Redirect"
+  # Service mesh (optional)
+  service_mesh:
+    enabled: false
+    istio_version: "1.18"
 
-# GPU Node Configuration
-gpu_node:
-  labels:
-    nvidia.com/gpu.present: "true"
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
-
-# Storage Configuration
-storage:
-  model_cache: "100Gi"
-  temp_cache: "20Gi"
-  redis_data: "10Gi"
-
-# Namespace Configuration
-namespaces:
-  - name: ask-maas-models
-    labels:
-      app: ask-maas
-      component: models
+# Security Configuration
+security:
+  # RBAC
+  rbac:
+    enabled: true
+    service_account: "ask-maas-sa"
   
-  - name: ask-maas-api
-    labels:
-      app: ask-maas
-      component: api
+  # Network policies
+  network_policies:
+    enabled: false
+    
+  # Pod security
+  pod_security:
+    run_as_non_root: true
+    fs_group: 1001
+    
+# Backup Configuration
+backup:
+  enabled: false
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 7
+
+# Advanced Configuration
+advanced:
+  # Node selectors
+  node_selector:
+    gpu_nodes:
+      nvidia.com/gpu.present: "true"
+    cpu_nodes: {}
   
-  - name: ask-maas-frontend
-    labels:
-      app: ask-maas
-      component: frontend
-
-# Health Check Configuration
-health_checks:
-  liveness:
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    timeoutSeconds: 5
+  # Tolerations for GPU nodes
+  gpu_tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Exists"
+      effect: "NoSchedule"
   
-  readiness:
-    initialDelaySeconds: 10
-    periodSeconds: 5
-    timeoutSeconds: 3
-
-# Timeout Configuration
-timeouts:
-  model_loading: 900  # 15 minutes for model download and load
-  deployment_wait: 300  # 5 minutes for regular deployments
-  request_timeout: 60  # 1 minute for API requests
-  stream_timeout: 300  # 5 minutes for streaming responses
-
-# Critical Environment Variables Reference
-# These MUST be set correctly for the system to work:
-#
-# In Orchestrator:
-#   MODEL_NAME: Must match the served_model_name of your chosen model
-#   VLLM_URL: http://vllm-<model>-service.ask-maas-models.svc.cluster.local:8080
-#   TEI_EMBEDDINGS_URL: http://tei-embeddings-service.ask-maas-models.svc.cluster.local:8080
-#   TEI_RERANKER_URL: http://tei-reranker-service.ask-maas-models.svc.cluster.local:8080
-#   REDIS_HOST: redis-service.ask-maas-api.svc.cluster.local
-#   REDIS_PASSWORD: (Set from redis-credentials secret)
-#
-# In vLLM:
-#   Ensure cache directories are writable (use /tmp)
-#   Set CUDA_VISIBLE_DEVICES if multiple GPUs
-#   TORCH_CUDA_ARCH_LIST must match your GPU architecture
-#
-# In Frontend:
-#   NEXT_PUBLIC_API_URL: Must point to the API route URL
+  # Resource quotas
+  resource_quotas:
+    enabled: false
+    max_cpu: "100"
+    max_memory: "200Gi"
+    max_storage: "500Gi"

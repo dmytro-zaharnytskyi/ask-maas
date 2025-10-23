@@ -10,7 +10,7 @@
 # - At least 100GB storage available
 # - Git repository cloned locally
 #
-# Usage: ./deploy-ask-maas.sh [--skip-operators] [--skip-build] [--cleanup] [--model qwen|mistral]
+# Usage: ./deploy-ask-maas.sh [--skip-operators] [--skip-build] [--cleanup] [--model qwen|mistral] [--ingest-only]
 #
 
 set -e  # Exit on error
@@ -32,6 +32,7 @@ SKIP_OPERATORS=false
 SKIP_BUILD=false
 CLEANUP_MODE=false
 DRY_RUN=false
+INGEST_ONLY=false
 MODEL_TYPE="qwen"  # Default to Qwen 2.5 32B
 
 # Parse command line arguments
@@ -49,6 +50,10 @@ while [[ $# -gt 0 ]]; do
             CLEANUP_MODE=true
             shift
             ;;
+        --ingest-only)
+            INGEST_ONLY=true
+            shift
+            ;;
         --dry-run)
             DRY_RUN=true
             shift
@@ -63,6 +68,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-operators  Skip operator installation checks"
             echo "  --skip-build      Skip building container images"
             echo "  --cleanup         Remove all Ask MaaS components"
+            echo "  --ingest-only     Only run article ingestion"
             echo "  --dry-run         Show what would be done without executing"
             echo "  --model TYPE      Choose model type: qwen (default) or mistral"
             echo "  --help            Show this help message"
@@ -353,35 +359,19 @@ EOF
 deploy_orchestrator_api() {
     log_info "Building and deploying Orchestrator API..."
     
+    # Fix any import issues before building
+    log_info "Checking and fixing import issues..."
+    if grep -q "from app.services.retrieval import RetrievalService" "$PROJECT_ROOT/ask-maas-api/app/routers/chat.py" 2>/dev/null; then
+        log_info "Fixing import in chat.py..."
+        sed -i 's/from app.services.retrieval import RetrievalService//g' "$PROJECT_ROOT/ask-maas-api/app/routers/chat.py"
+    fi
+    
     # Build the image
     if [ "$SKIP_BUILD" = false ]; then
         log_info "Building orchestrator API image..."
         cd "$PROJECT_ROOT/ask-maas-api"
         
-        # Create simplified Dockerfile
-        cat > Dockerfile.simple <<'EOF'
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Set environment
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-EXPOSE 8000
-
-# Run the application
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-EOF
-        
-        execute $CONTAINER_TOOL build -f Dockerfile.simple -t orchestrator-api:latest .
+        execute $CONTAINER_TOOL build -f Dockerfile -t orchestrator-api:latest .
         
         # Login to internal registry
         log_info "Logging in to internal registry..."
@@ -880,40 +870,86 @@ deploy_frontend() {
         log_info "Building frontend image..."
         cd "$PROJECT_ROOT/ghost-site"
         
-        # Create simplified Dockerfile
-        cat > Dockerfile.simple <<EOF
-FROM node:18-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+        # Ensure the API route returns static article list
+        log_info "Updating article routes..."
+        cat > src/app/api/articles/route.ts <<'EOROUTE'
+import { NextResponse } from 'next/server';
 
-FROM node:18-alpine
-WORKDIR /app
-RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+export const dynamic = 'force-dynamic';
 
-# Copy built application
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
+const ARTICLES = [
+  {
+    id: 'article-1',
+    title: 'All you can kustomize during the MaaS deployment',
+    description: 'Learn how MaaS adds policy-driven access, tiered quotas, and token-aware rate limiting to KServe-hosted models on OpenShift',
+    category: 'OpenShift',
+    author: 'Red Hat Developer',
+    date: 'October 23, 2024',
+    filename: 'All you can kustomize during the MaaS deployment _ Red Hat Developer.html',
+    path: '/articles/All you can kustomize during the MaaS deployment _ Red Hat Developer.html'
+  },
+  {
+    id: 'article-2',
+    title: 'Deploy Llama 3 8B with vLLM',
+    description: 'Learn how to deploy and optimize Llama 3 8B model using vLLM on OpenShift',
+    category: 'AI/ML',
+    author: 'Red Hat Developer',
+    date: 'October 23, 2024',
+    filename: 'Deploy Llama 3 8B with vLLM _ Red Hat Developer.html',
+    path: '/articles/Deploy Llama 3 8B with vLLM _ Red Hat Developer.html'
+  },
+  {
+    id: 'article-3',
+    title: 'Ollama vs. vLLM: A deep dive into performance benchmarking',
+    description: 'Comprehensive performance comparison between Ollama and vLLM for LLM inference',
+    category: 'Performance',
+    author: 'Red Hat Developer',
+    date: 'October 23, 2024',
+    filename: 'Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html',
+    path: '/articles/Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html'
+  },
+  {
+    id: 'article-4',
+    title: 'Profiling vLLM Inference Server with GPU acceleration on RHEL',
+    description: 'Deep dive into profiling vLLM inference server with GPU acceleration on RHEL',
+    category: 'Performance',
+    author: 'Red Hat Developer',
+    date: 'October 23, 2024',
+    filename: 'Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html',
+    path: '/articles/Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html'
+  },
+  {
+    id: 'article-5',
+    title: 'What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift',
+    description: 'Learn what MaaS (Models-as-a-Service) is and how to quickly set it up on OpenShift for AI/ML workloads',
+    category: 'OpenShift',
+    author: 'Red Hat Developer',
+    date: 'October 23, 2024',
+    filename: 'What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html',
+    path: '/articles/What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html'
+  }
+];
 
-# Copy articles to static directory
-RUN mkdir -p public/static-articles
-COPY --chown=nextjs:nodejs articles/*.html public/static-articles/ 2>/dev/null || true
-COPY --chown=nextjs:nodejs articles/*_files public/static-articles/ 2>/dev/null || true
-
-USER nextjs
-EXPOSE 3000
-
-ENV NODE_ENV=production
-ENV NEXT_PUBLIC_API_URL=https://ask-maas-api.apps.${CLUSTER_DOMAIN}
-
-CMD ["npm", "start"]
-EOF
+export async function GET() {
+  try {
+    return NextResponse.json({ articles: ARTICLES });
+  } catch (error) {
+    console.error('Error returning articles:', error);
+    return NextResponse.json({ 
+      articles: [],
+      error: 'Failed to load articles' 
+    }, { status: 500 });
+  }
+}
+EOROUTE
         
-        execute $CONTAINER_TOOL build -f Dockerfile.simple -t ghost-article-site:latest .
+        # Copy articles to public directory for serving
+        log_info "Copying articles to public directory..."
+        mkdir -p public/articles
+        cp -r ../articles/* public/articles/ 2>/dev/null || true
+        
+        # Build using the standard Dockerfile
+        execute $CONTAINER_TOOL build -f Dockerfile -t ghost-article-site:latest .
         
         # Tag and push image
         execute $CONTAINER_TOOL tag ghost-article-site:latest $REGISTRY_URL/ask-maas-frontend/ghost-article-site:latest
@@ -1037,18 +1073,78 @@ ingest_articles() {
     API_URL="https://ask-maas-api.apps.${CLUSTER_DOMAIN}"
     
     # Wait for API to be ready
-    sleep 10
+    log_info "Waiting for API to be fully ready..."
+    for i in {1..30}; do
+        if curl -s "${API_URL}/health/ready" | grep -q "ready"; then
+            log_success "API is ready"
+            break
+        fi
+        sleep 2
+    done
     
-    # Ingest MIG article
-    log_info "Ingesting MIG article..."
-    curl -s -X POST "${API_URL}/api/v1/ingest/page" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"page_url\": \"https://ask-maas-frontend.apps.${CLUSTER_DOMAIN}/static-articles/Dynamic%20GPU%20slicing%20with%20Red%20Hat%20OpenShift%20and%20NVIDIA%20MIG%20_%20Red%20Hat%20Developer.html\",
-        \"force_refresh\": true
-      }" || log_warning "Article ingestion failed"
+    # List of articles to ingest
+    declare -a articles=(
+        "All you can kustomize during the MaaS deployment _ Red Hat Developer.html"
+        "Deploy Llama 3 8B with vLLM _ Red Hat Developer.html"
+        "Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html"
+        "Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html"
+        "What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html"
+    )
     
-    log_success "Articles ingested"
+    # Ingest each article using the Python ingestion script
+    log_info "Creating ingestion script..."
+    cat > /tmp/ingest_articles.py <<'EOSCRIPT'
+#!/usr/bin/env python3
+import os, sys, time, json, requests
+from pathlib import Path
+from bs4 import BeautifulSoup
+
+def extract_text_from_html(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            soup = BeautifulSoup(f.read(), 'html.parser')
+        for script in soup(["script", "style"]):
+            script.decompose()
+        text = soup.get_text()
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = ' '.join(chunk for chunk in chunks if chunk)
+        return text[:50000]
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+
+api_url = sys.argv[1]
+articles_dir = sys.argv[2]
+
+articles = [
+    ("All you can kustomize during the MaaS deployment _ Red Hat Developer.html", "All you can kustomize during the MaaS deployment"),
+    ("What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html", "What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift"),
+    ("Deploy Llama 3 8B with vLLM _ Red Hat Developer.html", "Deploy Llama 3 8B with vLLM"),
+    ("Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html", "Ollama vs. vLLM: A deep dive into performance benchmarking"),
+    ("Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html", "Profiling vLLM Inference Server with GPU acceleration on RHEL"),
+]
+
+for filename, title in articles:
+    file_path = Path(articles_dir) / filename
+    if not file_path.exists():
+        continue
+    content = extract_text_from_html(file_path)
+    if content:
+        response = requests.post(
+            f"{api_url}/api/v1/ingest/content",
+            json={"page_url": f"file://{file_path}", "title": title, "content": content, "content_type": "text", "force_refresh": True},
+            timeout=60
+        )
+        print(f"{title}: {'OK' if response.status_code == 200 else 'FAILED'}")
+    time.sleep(2)
+EOSCRIPT
+    
+    # Run the ingestion script
+    python3 /tmp/ingest_articles.py "${API_URL}" "$PROJECT_ROOT/articles" || log_warning "Some articles may have failed to ingest"
+    rm -f /tmp/ingest_articles.py
+    
+    log_success "All articles ingested"
 }
 
 # Verify deployment
@@ -1130,7 +1226,15 @@ main() {
         exit 0
     fi
     
-    # Run deployment steps
+    # Check if ingest-only mode
+    if [ "$INGEST_ONLY" = true ]; then
+        log_info "Running in ingest-only mode"
+        ingest_articles
+        log_success "Article ingestion completed"
+        exit 0
+    fi
+    
+    # Run full deployment steps
     check_prerequisites
     install_operators
     create_namespaces

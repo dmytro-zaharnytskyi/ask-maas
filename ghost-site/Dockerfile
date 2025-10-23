@@ -1,46 +1,26 @@
-# Multi-stage build for Ghost Article Site
 FROM node:18-alpine AS builder
-
-# Install dependencies
-RUN apk add --no-cache libc6-compat
 WORKDIR /app
-
-# Copy package files
-COPY package.json package-lock.json* ./
+COPY package*.json ./
 RUN npm ci
-
-# Copy source code
 COPY . .
-
-# Build the application
-ENV NEXT_TELEMETRY_DISABLED 1
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
-ARG NEXT_PUBLIC_SITE_URL=http://localhost:3000
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
 RUN npm run build
 
-# Production image
-FROM node:18-alpine AS runner
+FROM node:18-alpine
 WORKDIR /app
-
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
-
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
 # Copy built application
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Copy public folder if it exists
-COPY --from=builder --chown=nextjs:nodejs /app/public* ./public/
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+
+# Create articles directory and ensure proper permissions
+RUN mkdir -p /articles && chown -R nextjs:nodejs /app && chmod -R 755 /app/public
 
 USER nextjs
-
 EXPOSE 3000
 
-ENV PORT 3000
+ENV NODE_ENV=production
 
-CMD ["node", "server.js"]
+CMD ["npm", "start"]

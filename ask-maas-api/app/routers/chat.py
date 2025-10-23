@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 import structlog
 
-from app.services.retrieval import RetrievalService
 from app.services.vector_retrieval import VectorRetrievalService
 from app.services.llm import LLMService
 from app.services.cache import CacheService
