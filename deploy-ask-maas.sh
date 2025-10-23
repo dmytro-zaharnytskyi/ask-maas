@@ -440,6 +440,8 @@ spec:
           value: "http://tei-embeddings-service.ask-maas-models.svc.cluster.local:8080"
         - name: TEI_RERANKER_URL
           value: "http://tei-reranker-service.ask-maas-models.svc.cluster.local:8080"
+        - name: QDRANT_URL
+          value: "http://qdrant-service.ask-maas-models.svc.cluster.local:6333"
         - name: CORS_ORIGINS
           value: '["*"]'
         - name: MIN_RERANK_SCORE
@@ -485,9 +487,102 @@ EOF
     log_success "Orchestrator API deployed"
 }
 
+# Deploy Qdrant vector database
+deploy_qdrant() {
+    log_info "Deploying Qdrant vector database..."
+    
+    # Check if Qdrant already exists
+    if oc get deployment qdrant -n ask-maas-models >/dev/null 2>&1; then
+        log_info "Qdrant already deployed, skipping..."
+        return 0
+    fi
+    
+    execute oc apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-storage
+  namespace: ask-maas-models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: ask-maas-models
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:latest
+        ports:
+        - containerPort: 6333
+          name: http
+        - containerPort: 6334
+          name: grpc
+        env:
+        - name: QDRANT__SERVICE__HTTP_PORT
+          value: "6333"
+        - name: QDRANT__SERVICE__GRPC_PORT
+          value: "6334"
+        - name: QDRANT__STORAGE__STORAGE_PATH
+          value: "/qdrant/storage"
+        volumeMounts:
+        - name: storage
+          mountPath: /qdrant/storage
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: qdrant-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-service
+  namespace: ask-maas-models
+spec:
+  selector:
+    app: qdrant
+  ports:
+  - name: http
+    port: 6333
+    targetPort: 6333
+  - name: grpc
+    port: 6334
+    targetPort: 6334
+EOF
+    
+    # Wait for Qdrant to be ready
+    wait_for_deployment qdrant ask-maas-models 180
+    log_success "Qdrant deployed"
+}
+
 # Deploy model services
 deploy_model_services() {
     log_info "Deploying model services..."
+    
+    # Deploy Qdrant vector database first (essential for RAG)
+    deploy_qdrant
     
     # Deploy chosen LLM model
     if [ "$MODEL_TYPE" = "qwen" ]; then
@@ -983,7 +1078,7 @@ spec:
           name: http
         env:
         - name: NEXT_PUBLIC_API_URL
-          value: "https://ask-maas-api.apps.${CLUSTER_DOMAIN}"
+          value: "https://ask-maas-api.${CLUSTER_DOMAIN}"
         - name: NODE_ENV
           value: "production"
         - name: PORT
@@ -1062,15 +1157,24 @@ spec:
 EOF
     
     log_success "Routes configured"
-    log_info "Frontend URL: https://ask-maas-frontend.apps.${CLUSTER_DOMAIN}"
-    log_info "API URL: https://ask-maas-api.apps.${CLUSTER_DOMAIN}"
+    log_info "Frontend URL: https://ask-maas-frontend.${CLUSTER_DOMAIN}"
+    log_info "API URL: https://ask-maas-api.${CLUSTER_DOMAIN}"
 }
 
 # Ingest initial articles
 ingest_articles() {
     log_info "Ingesting initial articles..."
     
-    API_URL="https://ask-maas-api.apps.${CLUSTER_DOMAIN}"
+    # Get cluster domain if not already set
+    if [ -z "$CLUSTER_DOMAIN" ]; then
+        CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+        if [ -z "$CLUSTER_DOMAIN" ]; then
+            log_error "Could not determine cluster domain. Make sure you're logged in to OpenShift."
+        fi
+        log_info "Cluster domain: $CLUSTER_DOMAIN"
+    fi
+    
+    API_URL="https://ask-maas-api.${CLUSTER_DOMAIN}"
     
     # Wait for API to be ready
     log_info "Waiting for API to be fully ready..."
@@ -1095,9 +1199,11 @@ ingest_articles() {
     log_info "Creating ingestion script..."
     cat > /tmp/ingest_articles.py <<'EOSCRIPT'
 #!/usr/bin/env python3
-import os, sys, time, json, requests
+import os, sys, time, json, requests, warnings
 from pathlib import Path
 from bs4 import BeautifulSoup
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def extract_text_from_html(file_path):
     try:
@@ -1134,7 +1240,8 @@ for filename, title in articles:
         response = requests.post(
             f"{api_url}/api/v1/ingest/content",
             json={"page_url": f"file://{file_path}", "title": title, "content": content, "content_type": "text", "force_refresh": True},
-            timeout=60
+            timeout=60,
+            verify=False
         )
         print(f"{title}: {'OK' if response.status_code == 200 else 'FAILED'}")
     time.sleep(2)
@@ -1171,7 +1278,7 @@ verify_deployment() {
     
     # Test API health
     log_info "Testing API health endpoint..."
-    API_URL="https://ask-maas-api.apps.${CLUSTER_DOMAIN}"
+    API_URL="https://ask-maas-api.${CLUSTER_DOMAIN}"
     if curl -s "$API_URL/health/live" | grep -q "healthy"; then
         log_success "API is healthy"
     else
@@ -1184,8 +1291,8 @@ verify_deployment() {
     echo "===================================="
     echo ""
     echo "Access your application at:"
-    echo "  Frontend: https://ask-maas-frontend.apps.${CLUSTER_DOMAIN}"
-    echo "  API: https://ask-maas-api.apps.${CLUSTER_DOMAIN}"
+    echo "  Frontend: https://ask-maas-frontend.${CLUSTER_DOMAIN}"
+    echo "  API: https://ask-maas-api.${CLUSTER_DOMAIN}"
     echo ""
     echo "Model deployed: ${MODEL_TYPE^^}"
     if [ "$MODEL_TYPE" = "qwen" ]; then
