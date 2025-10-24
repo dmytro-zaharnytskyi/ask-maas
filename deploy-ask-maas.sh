@@ -527,7 +527,7 @@ spec:
     spec:
       containers:
       - name: qdrant
-        image: qdrant/qdrant:latest
+        image: qdrant/qdrant:v1.7.4
         ports:
         - containerPort: 6333
           name: http
@@ -540,9 +540,19 @@ spec:
           value: "6334"
         - name: QDRANT__STORAGE__STORAGE_PATH
           value: "/qdrant/storage"
+        - name: QDRANT__STORAGE__SNAPSHOTS_PATH
+          value: "/qdrant/storage/snapshots"
+        - name: QDRANT__STORAGE__ON_DISK_PAYLOAD
+          value: "true"
+        - name: QDRANT__STORAGE__WAL__WAL_CAPACITY_MB
+          value: "128"
         volumeMounts:
         - name: storage
           mountPath: /qdrant/storage
+          subPath: storage
+        - name: storage
+          mountPath: /qdrant/snapshots
+          subPath: snapshots
         resources:
           requests:
             cpu: "500m"
@@ -550,6 +560,14 @@ spec:
           limits:
             cpu: "2"
             memory: "2Gi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
       volumes:
       - name: storage
         persistentVolumeClaim:
