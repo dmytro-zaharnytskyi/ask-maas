@@ -3,6 +3,7 @@ Ingest endpoints for processing articles and GitHub resources
 """
 import asyncio
 import hashlib
+import os
 import time
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -402,6 +403,54 @@ async def ingest_content(
         #     logger.info("Stored chunks in vector database", page_url=request.page_url, count=len(chunks))
         # finally:
         #     await vectordb.close()
+        
+        # Extract and enqueue links for citation expansion
+        try:
+            import re
+            import httpx
+            
+            # Extract HTTP/HTTPS links from content
+            url_pattern = r'https?://[^\s<>"\'{}|\\^`\[\]]+[^\s<>"\'{}|\\^`\[\].,;:!?)]'
+            links = re.findall(url_pattern, request.content)
+            
+            # Filter out unwanted links (images, css, js, etc.)
+            useful_links = [
+                link for link in set(links)
+                if not any(link.lower().endswith(ext) for ext in ['.jpg', '.png', '.gif', '.css', '.js', '.ico', '.svg', '.woff'])
+                and len(link) > 20  # Filter out very short URLs
+            ][:20]  # Limit to 20 links per article
+            
+            if useful_links:
+                logger.info(f"Found {len(useful_links)} links to process for citations", page_url=request.page_url)
+                
+                # Enqueue each link to citation expander
+                citation_api_url = os.getenv("CITATION_API_URL", "http://citation-expander.ask-maas.svc.cluster.local:8000")
+                
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    enqueued = 0
+                    for link in useful_links:
+                        try:
+                            # Enqueue with first chunk as parent
+                            parent_chunk_id = chunks[0]["id"] if chunks else "unknown"
+                            response = await client.post(
+                                f"{citation_api_url}/enqueue",
+                                params={
+                                    "url": link,
+                                    "parent_doc_id": request.page_url,
+                                    "parent_chunk_id": parent_chunk_id,
+                                    "depth": 0
+                                },
+                                timeout=2.0
+                            )
+                            if response.status_code == 200:
+                                enqueued += 1
+                        except Exception as e:
+                            logger.debug(f"Failed to enqueue link {link}: {e}")
+                    
+                    if enqueued > 0:
+                        logger.info(f"Enqueued {enqueued} links for citation processing", page_url=request.page_url)
+        except Exception as e:
+            logger.warning(f"Link extraction failed: {e}")
         
         processing_time = time.time() - start_time
         

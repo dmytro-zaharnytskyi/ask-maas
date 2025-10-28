@@ -15,7 +15,7 @@ const RedHatArticleViewer: React.FC<RedHatArticleViewerProps> = ({ articlePath, 
 
   useEffect(() => {
     // Set the article URL for the chat widget - use the actual article path
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://ask-maas-frontend-ask-maas-frontend.apps.ask-maas-v12.dfhf.s1.devshift.org';
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
     setArticleUrl(articlePath.startsWith('http') ? articlePath : `${baseUrl}${articlePath}`);
     
     // Add a floating chat button to the iframe content after it loads

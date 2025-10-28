@@ -983,78 +983,8 @@ deploy_frontend() {
         log_info "Building frontend image..."
         cd "$PROJECT_ROOT/ghost-site"
         
-        # Ensure the API route returns static article list
-        log_info "Updating article routes..."
-        cat > src/app/api/articles/route.ts <<'EOROUTE'
-import { NextResponse } from 'next/server';
-
-export const dynamic = 'force-dynamic';
-
-const ARTICLES = [
-  {
-    id: 'article-1',
-    title: 'All you can kustomize during the MaaS deployment',
-    description: 'Learn how MaaS adds policy-driven access, tiered quotas, and token-aware rate limiting to KServe-hosted models on OpenShift',
-    category: 'OpenShift',
-    author: 'Red Hat Developer',
-    date: 'October 23, 2024',
-    filename: 'All you can kustomize during the MaaS deployment _ Red Hat Developer.html',
-    path: '/articles/All you can kustomize during the MaaS deployment _ Red Hat Developer.html'
-  },
-  {
-    id: 'article-2',
-    title: 'Deploy Llama 3 8B with vLLM',
-    description: 'Learn how to deploy and optimize Llama 3 8B model using vLLM on OpenShift',
-    category: 'AI/ML',
-    author: 'Red Hat Developer',
-    date: 'October 23, 2024',
-    filename: 'Deploy Llama 3 8B with vLLM _ Red Hat Developer.html',
-    path: '/articles/Deploy Llama 3 8B with vLLM _ Red Hat Developer.html'
-  },
-  {
-    id: 'article-3',
-    title: 'Ollama vs. vLLM: A deep dive into performance benchmarking',
-    description: 'Comprehensive performance comparison between Ollama and vLLM for LLM inference',
-    category: 'Performance',
-    author: 'Red Hat Developer',
-    date: 'October 23, 2024',
-    filename: 'Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html',
-    path: '/articles/Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html'
-  },
-  {
-    id: 'article-4',
-    title: 'Profiling vLLM Inference Server with GPU acceleration on RHEL',
-    description: 'Deep dive into profiling vLLM inference server with GPU acceleration on RHEL',
-    category: 'Performance',
-    author: 'Red Hat Developer',
-    date: 'October 23, 2024',
-    filename: 'Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html',
-    path: '/articles/Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html'
-  },
-  {
-    id: 'article-5',
-    title: 'What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift',
-    description: 'Learn what MaaS (Models-as-a-Service) is and how to quickly set it up on OpenShift for AI/ML workloads',
-    category: 'OpenShift',
-    author: 'Red Hat Developer',
-    date: 'October 23, 2024',
-    filename: 'What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html',
-    path: '/articles/What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html'
-  }
-];
-
-export async function GET() {
-  try {
-    return NextResponse.json({ articles: ARTICLES });
-  } catch (error) {
-    console.error('Error returning articles:', error);
-    return NextResponse.json({ 
-      articles: [],
-      error: 'Failed to load articles' 
-    }, { status: 500 });
-  }
-}
-EOROUTE
+        # API route now dynamically loads articles from public/articles folder
+        log_info "Using dynamic article loading from public/articles folder..."
         
         # Copy articles to public directory for serving
         log_info "Copying articles to public directory..."
@@ -1204,14 +1134,8 @@ ingest_articles() {
         sleep 2
     done
     
-    # List of articles to ingest
-    declare -a articles=(
-        "All you can kustomize during the MaaS deployment _ Red Hat Developer.html"
-        "Deploy Llama 3 8B with vLLM _ Red Hat Developer.html"
-        "Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html"
-        "Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html"
-        "What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html"
-    )
+    # Dynamically find all HTML articles to ingest
+    log_info "Finding articles to ingest from articles directory..."
     
     # Ingest each article using the Python ingestion script
     log_info "Creating ingestion script..."
@@ -1241,17 +1165,17 @@ def extract_text_from_html(file_path):
 api_url = sys.argv[1]
 articles_dir = sys.argv[2]
 
-articles = [
-    ("All you can kustomize during the MaaS deployment _ Red Hat Developer.html", "All you can kustomize during the MaaS deployment"),
-    ("What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift _ Red Hat Developer.html", "What is MaaS (Models-as-a-Service) and how to set it up fast on OpenShift"),
-    ("Deploy Llama 3 8B with vLLM _ Red Hat Developer.html", "Deploy Llama 3 8B with vLLM"),
-    ("Ollama vs. vLLM_ A deep dive into performance benchmarking _ Red Hat Developer.html", "Ollama vs. vLLM: A deep dive into performance benchmarking"),
-    ("Profiling vLLM Inference Server with GPU acceleration on RHEL _ Red Hat Developer.html", "Profiling vLLM Inference Server with GPU acceleration on RHEL"),
-]
+# Dynamically find all HTML files in the articles directory
+articles_path = Path(articles_dir)
+html_files = list(articles_path.glob("*.html"))
+print(f"Found {len(html_files)} HTML articles to ingest")
 
-for filename, title in articles:
-    file_path = Path(articles_dir) / filename
+for file_path in html_files:
+    filename = file_path.name
+    # Extract title from filename (remove .html and replace underscores with spaces)
+    title = filename.replace('.html', '').replace('_', ' ').strip()
     if not file_path.exists():
+        print(f"Skipping {filename}: file not found")
         continue
     content = extract_text_from_html(file_path)
     if content:

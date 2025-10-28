@@ -64,12 +64,16 @@ class Settings(BaseSettings):
         env="VLLM_URL"
     )
     TEI_EMBEDDINGS_URL: str = Field(
-        default="http://tei-embeddings-service.ask-maas-models.svc.cluster.local:8080",
+        default="http://tei-embeddings.ask-maas.svc.cluster.local:8080",
         env="TEI_EMBEDDINGS_URL"
     )
     TEI_RERANKER_URL: str = Field(
         default="http://tei-reranker-service.ask-maas-models.svc.cluster.local:8080",
         env="TEI_RERANKER_URL"
+    )
+    QDRANT_URL: str = Field(
+        default="http://qdrant.ask-maas.svc.cluster.local:6333",
+        env="QDRANT_URL"
     )
     
     # Model Configuration

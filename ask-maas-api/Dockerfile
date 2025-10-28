@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
+# Copy citation expansion patch
+COPY ../ask_maas_orchestrator_patch /app/ask_maas_orchestrator_patch
+
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

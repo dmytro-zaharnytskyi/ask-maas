@@ -74,13 +74,13 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
 
     // Auto-ingest the article when widget loads
     const ingestArticle = async () => {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? window.location.origin.replace('ask-maas-frontend', 'ask-maas-api') : 'https://ask-maas-api.apps.ask-maas-v12.dfhf.s1.devshift.org');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? window.location.origin.replace('ask-maas-frontend', 'ask-maas-api') : '');
       setIsIngesting(true);
       setError(null);
       
       try {
         // Generate proper article URL
-        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ask-maas-frontend.apps.ask-maas-v12.dfhf.s1.devshift.org';
+        const origin = typeof window !== 'undefined' ? window.location.origin : '';
         const articleUrl = activePageUrl || (articlePath ? `${origin}${articlePath}` : `${origin}/article/${encodeURIComponent(articleTitle || '')}`);
         
         // First, fetch the article HTML content
@@ -171,7 +171,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
             title: articleTitle || 'Article',
             content: articleContentText,
             content_type: 'text',
-            force_refresh: true,
+            force_refresh: false,  // Only index if not cached - avoid re-indexing every time
           }),
         });
 
@@ -189,12 +189,9 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
       }
     };
     
-    // Always attempt to ingest when widget opens
-    if (articleTitle) {
-      ingestArticle();
-    } else {
-      setIsIngesting(false);
-    }
+    // Skip ingestion - articles are pre-indexed in Qdrant
+    // This removes the 10-second delay
+    setIsIngesting(false);
 
 
     return () => {
@@ -230,15 +227,16 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ currentPageUrl, pageUrl, articl
     setIsLoading(true);
     setError(null);
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? window.location.origin.replace('ask-maas-frontend', 'ask-maas-api') : 'https://ask-maas-api.apps.ask-maas-v12.dfhf.s1.devshift.org');
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? window.location.origin.replace('ask-maas-frontend', 'ask-maas-api') : '');
     
     // Generate proper page URL for chat
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ask-maas-frontend.apps.ask-maas-v12.dfhf.s1.devshift.org';
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const chatPageUrl = activePageUrl || (articlePath ? `${origin}${articlePath}` : pageUrl || `${origin}/article/${encodeURIComponent(articleTitle || '')}`);
 
     try {
       // Create EventSource for SSE streaming
-      const response = await fetch(`${apiUrl}/api/v1/chat`, {
+        // Use unified endpoint for global search
+        const response = await fetch(`${apiUrl}/api/v1/chat/unified`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

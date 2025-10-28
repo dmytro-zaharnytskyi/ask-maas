@@ -30,3 +30,5 @@ python-jose[cryptography]==3.3.0
 structlog==24.2.0
 python-dotenv==1.0.1
 asyncio-throttle==1.0.2
+rq==1.15.1
+requests==2.31.0

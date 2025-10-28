@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: citation-expander-config
+  namespace: ask-maas
+  labels:
+    app: citation-expander
+data:
+  allowlist.yaml: |
+    # URL Allowlist Patterns for Citation Expander
+    # These regex patterns control which URLs are allowed to be fetched
+    patterns:
+      # Version Control Platforms
+      - "^https?://(www\\.)?github\\.com/"
+      - "^https?://(www\\.)?gitlab\\.com/"
+      - "^https?://(www\\.)?bitbucket\\.org/"
+      - "^https?://raw\\.githubusercontent\\.com/"
+      
+      # Documentation Sites
+      - "^https?://(www\\.)?.*\\.readthedocs\\.(io|org)/"
+      - "^https?://docs\\."
+      - "^https?://(www\\.)?kubernetes\\.io/"
+      - "^https?://(www\\.)?openshift\\.(com|io)/"
+      - "^https?://(www\\.)?docker\\.com/docs/"
+      
+      # Red Hat Resources
+      - "^https?://(www\\.)?redhat\\.com/"
+      - "^https?://(www\\.)?developers\\.redhat\\.com/"
+      - "^https?://(www\\.)?access\\.redhat\\.com/"
+      - "^https?://(www\\.)?cloud\\.redhat\\.com/"
+      
+      # Cloud Providers
+      - "^https?://(www\\.)?cloud\\.google\\.com/"
+      - "^https?://kubernetes\\.io/"
+      - "^https?://aws\\.amazon\\.com/"
+      - "^https?://docs\\.aws\\.amazon\\.com/"
+      - "^https?://azure\\.microsoft\\.com/"
+      - "^https?://docs\\.microsoft\\.com/"
+      
+      # ML/AI Platforms
+      - "^https?://(www\\.)?huggingface\\.co/"
+      - "^https?://(www\\.)?pytorch\\.org/"
+      - "^https?://(www\\.)?tensorflow\\.org/"
+      - "^https?://(www\\.)?arxiv\\.org/"
+      - "^https?://(www\\.)?papers\\.nips\\.cc/"
+      
+      # Developer Communities
+      - "^https?://(www\\.)?medium\\.com/@?[a-zA-Z0-9]+"
+      - "^https?://(www\\.)?dev\\.to/"
+      - "^https?://(www\\.)?stackoverflow\\.com/"
+      - "^https?://(www\\.)?reddit\\.com/r/(programming|kubernetes|openshift|machinelearning|datascience)"
+      
+      # Package Repositories
+      - "^https?://(www\\.)?pypi\\.org/"
+      - "^https?://(www\\.)?npmjs\\.com/"
+      - "^https?://(www\\.)?crates\\.io/"
+      - "^https?://(www\\.)?pkg\\.go\\.dev/"
+      
+      # Standards and RFCs
+      - "^https?://(www\\.)?ietf\\.org/"
+      - "^https?://tools\\.ietf\\.org/"
+      - "^https?://(www\\.)?w3\\.org/"
+      
+      # Operator and Helm Charts
+      - "^https?://operatorhub\\.io/"
+      - "^https?://artifacthub\\.io/"
+      - "^https?://charts\\.helm\\.sh/"
+      
+      # CNCF Projects
+      - "^https?://(www\\.)?cncf\\.io/"
+      - "^https?://(www\\.)?prometheus\\.io/"
+      - "^https?://(www\\.)?grafana\\.com/"
+      - "^https?://(www\\.)?istio\\.io/"
+      - "^https?://(www\\.)?envoyproxy\\.io/"
+      - "^https?://(www\\.)?fluxcd\\.io/"
+      - "^https?://(www\\.)?argoproj\\.github\\.io/"
+      
+      # Specific MaaS/LLM Related
+      - "^https?://(www\\.)?vllm\\.ai/"
+      - "^https?://(www\\.)?ray\\.io/"
+      - "^https?://(www\\.)?langchain\\.com/"
+      - "^https?://(www\\.)?ollama\\.com/"
+      - "^https?://(www\\.)?qdrant\\.tech/"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: citation-expander-secrets
+  namespace: ask-maas
+  labels:
+    app: citation-expander
+type: Opaque
+stringData:
+  # TODO: Add your GitHub token here for higher API rate limits
+  github-token: "YOUR_GITHUB_TOKEN_HERE"

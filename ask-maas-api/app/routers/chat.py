@@ -20,6 +20,16 @@ from app.models.chat import ChatRequest, ChatResponse, Citation, StreamEvent
 from app.utils.metrics import track_request_duration, track_token_usage
 
 logger = structlog.get_logger()
+
+# Try to import citation expansion if available
+try:
+    from ask_maas_orchestrator_patch import expand_context
+    citation_expansion_available = True
+    logger.info("Citation expansion enabled")
+except ImportError:
+    citation_expansion_available = False
+    logger.warning("Citation expansion not available")
+
 router = APIRouter(tags=["chat"])
 
 
@@ -122,8 +132,52 @@ async def chat_endpoint(
                 pages=[chunk.metadata.get("page_title", "Unknown") for chunk in retrieved_chunks[:3]]
             )
             
-            # Only abstain if confidence is very low
-            if retrieved_chunks[0].score < 0.05:  # Very low threshold
+            # IMPORTANT: Try citation expansion BEFORE abstaining
+            # Even if base chunks have low scores, citations might have better info
+            citation_snippets_found = []
+            if citation_expansion_available:
+                logger.info(f"Citation expansion available, attempting for query", request_id=request_id)
+                try:
+                    # Convert chunks to expected format
+                    base_chunks = [
+                        {
+                            "id": str(chunk.id) if hasattr(chunk, 'id') else str(i),
+                            "doc_id": chunk.metadata.get("page_url", ""),
+                            "text": chunk.text,
+                            "score": chunk.score
+                        }
+                        for i, chunk in enumerate(retrieved_chunks)
+                    ]
+                    
+                    # Try citation expansion
+                    async def expand_citations():
+                        return await asyncio.to_thread(
+                            expand_context, 
+                            request.query, 
+                            base_chunks,
+                            800
+                        )
+                    
+                    citation_snippets, citation_metadata = await asyncio.wait_for(
+                        expand_citations(),
+                        timeout=1.0
+                    )
+                    
+                    if citation_snippets:
+                        logger.info(
+                            "Citation expansion successful", 
+                            request_id=request_id,
+                            citations_found=len(citation_snippets)
+                        )
+                        citation_snippets_found = citation_snippets
+                    
+                except asyncio.TimeoutError:
+                    logger.warning("Citation expansion timed out", request_id=request_id)
+                except Exception as e:
+                    logger.warning("Citation expansion failed", request_id=request_id, error=str(e))
+            
+            # Only abstain if confidence is very low AND no citations found
+            if retrieved_chunks[0].score < 0.05 and not citation_snippets_found:  # Very low threshold
                 yield create_sse_message({
                     "id": request_id,
                     "type": "text",
@@ -155,6 +209,12 @@ async def chat_endpoint(
             
             # Prepare context from retrieved chunks
             context = vector_retrieval_service.format_context(retrieved_chunks)
+            
+            # Add citation snippets if found (from earlier expansion)
+            if citation_snippets_found:
+                logger.info(f"Adding {len(citation_snippets_found)} citation snippets to context", request_id=request_id)
+                context += "\n\n## Additional Context from Citations:\n"
+                context += "\n\n".join(citation_snippets_found[:3])
             
             # Stream tokens from LLM
             token_count = 0
@@ -192,6 +252,25 @@ async def chat_endpoint(
             
             # Extract and send citations with proper article attribution
             citations = extract_citations_with_context(accumulated_text, retrieved_chunks)
+            
+            # Add external citations from citation expansion
+            if citation_snippets_found:
+                logger.info(f"Adding {len(citation_snippets_found)} external citation sources", request_id=request_id)
+                for snippet in citation_snippets_found:
+                    # Parse snippet format: "(source: domain/title)\ntext"
+                    if "(source:" in snippet:
+                        source_line = snippet.split("\n")[0]
+                        source_text = source_line.replace("(source:", "").replace(")", "").strip()
+                        snippet_text = snippet.split("\n", 1)[1] if "\n" in snippet else snippet
+                        
+                        # Create citation object
+                        citations.append(Citation(
+                            text=snippet_text[:200] + "..." if len(snippet_text) > 200 else snippet_text,
+                            url=f"https://{source_text.split('/')[0]}",  # Extract domain
+                            title=source_text,
+                            score=0.8  # High score for external citations
+                        ))
+            
             if citations:
                 yield create_sse_message({
                     "id": request_id,

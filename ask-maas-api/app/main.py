@@ -21,6 +21,16 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 from app.routers import chat, ingest
+try:
+    from app.routers import chat_enhanced
+    chat_enhanced_available = True
+except ImportError:
+    chat_enhanced_available = False
+try:
+    from app.routers import chat_unified
+    chat_unified_available = True
+except ImportError:
+    chat_unified_available = False
 from app.services.cache import CacheService
 from app.services.config import Settings
 from app.utils.logging import setup_logging
@@ -191,6 +201,16 @@ async def track_requests(request: Request, call_next):
 # Include routers
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(ingest.router, prefix="/api/v1")
+
+# Include enhanced chat router with citation expansion if available
+if chat_enhanced_available:
+    app.include_router(chat_enhanced.router, prefix="/api/v1")
+    logger.info("Enhanced chat router with citation expansion enabled")
+
+# Include unified chat router if available
+if chat_unified_available:
+    app.include_router(chat_unified.router, prefix="/api/v1")
+    logger.info("Unified chat router enabled")
 
 # Health check endpoints
 @app.get("/health")

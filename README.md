@@ -19,6 +19,76 @@ Ask MaaS is a comprehensive AI documentation assistant that combines:
 - ⚡ **GPU Acceleration**: vLLM with optimized inference on NVIDIA GPUs
 - 🔄 **One-Click Deployment**: Automated script for complete system setup
 
+## 📚 Adding Articles to the System
+
+### Article Format and Placement
+
+The Ask-MaaS system dynamically loads HTML articles from the filesystem. To add new articles:
+
+1. **Article Location**: Place HTML files in the `ghost-site/public/articles/` directory
+2. **File Format**: Articles must be in HTML format with `.html` extension
+3. **Naming Convention**: Use descriptive filenames (e.g., `Deploy Llama 3 8B with vLLM _ Red Hat Developer.html`)
+
+### Article Structure
+
+Articles should follow this HTML structure for best compatibility:
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Your Article Title</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <!-- Article content with proper HTML formatting -->
+    <h1>Main Title</h1>
+    <p>Content paragraphs...</p>
+    <!-- Code blocks, lists, images, etc. -->
+</body>
+</html>
+```
+
+### Adding Articles - Step by Step
+
+1. **Prepare your article** in HTML format
+2. **Copy to the articles folder**:
+   ```bash
+   cp your-article.html ghost-site/public/articles/
+   ```
+3. **Rebuild the frontend** (if running locally):
+   ```bash
+   cd ghost-site
+   npm run build
+   ```
+4. **For OpenShift deployment**, rebuild and push the image:
+   ```bash
+   cd ghost-site
+   podman build -t ghost-site:latest .
+   # Push to your registry
+   ```
+
+### Article Indexing
+
+Articles are automatically:
+- **Listed** in the frontend UI based on files in the `public/articles` directory
+- **Indexed** for vector search when accessed through the chat interface
+- **Cached** for performance optimization
+
+### Article Metadata
+
+The system automatically extracts metadata from filenames:
+- **Title**: Derived from filename (underscores become spaces)
+- **Category**: Determined by keywords (MaaS, AI/ML, Performance, etc.)
+- **Date**: Uses current date or can be specified in the HTML meta tags
+
+### Best Practices
+
+1. **Use descriptive filenames** that reflect the article content
+2. **Include proper HTML structure** for better rendering
+3. **Test locally** before deploying to production
+4. **Keep articles focused** on specific topics for better search relevance
+5. **Include code examples** in `<pre><code>` blocks for syntax highlighting
+
 ## 🏗️ Architecture
 
 ### System Components
