@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.services.vector_retrieval import search_documents
 from app.services.llm import generate_response
 from app.services.config import get_settings
-from ask_maas_orchestrator_patch import expand_context
+from app.services.citation_expansion import expand_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -24,7 +24,7 @@ class ChatRequest(BaseModel):
     query: str = Field(..., description="User query")
     session_id: Optional[str] = Field(None, description="Session ID for context")
     expand_citations: bool = Field(True, description="Enable citation expansion")
-    max_chunks: int = Field(5, description="Maximum document chunks to retrieve")
+    max_chunks: int = Field(15, description="Maximum document chunks to retrieve")
 
 
 class ChatResponse(BaseModel):

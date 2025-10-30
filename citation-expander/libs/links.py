@@ -42,6 +42,10 @@ def load_allowlist_patterns() -> List[re.Pattern]:
             r"^https?://(www\.)?gitlab\.com/",
             r"^https?://(www\.)?bitbucket\.org/",
             r"^https?://(www\.)?docs\.",
+            r"^https?://docs\.",  # Catch all docs.* domains
+            r"^https?://.*\.github\.io/",  # GitHub Pages sites
+            r"^https?://(www\.)?kserve\.github\.io/",  # KServe docs
+            r"^https?://(www\.)?docs\.kuadrant\.io/",  # Kuadrant docs
             r"^https?://(www\.)?.*\.readthedocs\.",
             r"^https?://(www\.)?arxiv\.org/",
             r"^https?://(www\.)?medium\.com/",
@@ -51,6 +55,7 @@ def load_allowlist_patterns() -> List[re.Pattern]:
             r"^https?://(www\.)?kubernetes\.io/",
             r"^https?://(www\.)?openshift\.com/",
             r"^https?://(www\.)?redhat\.com/",
+            r"^https?://docs\.redhat\.com/",  # Red Hat documentation
             r"^https?://(www\.)?cloud\.google\.com/",
             r"^https?://(www\.)?aws\.amazon\.com/",
             r"^https?://(www\.)?azure\.microsoft\.com/",

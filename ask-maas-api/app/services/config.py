@@ -45,8 +45,9 @@ class Settings(BaseSettings):
                 return [origin.strip() for origin in v.split(",")]
         return v
     
-    # Redis Configuration
-    REDIS_HOST: str = Field(default="redis-service.ask-maas-api.svc.cluster.local", env="REDIS_HOST")
+    # Redis Configuration (deprecated - using Qdrant only)
+    # Kept for backward compatibility but not used
+    REDIS_HOST: str = Field(default="", env="REDIS_HOST")
     REDIS_PORT: int = Field(default=6379, env="REDIS_PORT")
     REDIS_PASSWORD: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
     REDIS_DB: int = Field(default=0, env="REDIS_DB")
@@ -83,11 +84,11 @@ class Settings(BaseSettings):
     TOP_P: float = Field(default=0.9, env="TOP_P")
     STREAM_ENABLED: bool = Field(default=True, env="STREAM_ENABLED")
     
-    # Chunking Configuration
-    CHUNK_SIZE: int = Field(default=1000, env="CHUNK_SIZE")
-    CHUNK_OVERLAP: int = Field(default=120, env="CHUNK_OVERLAP")
+    # Chunking Configuration - Optimized for better context preservation
+    CHUNK_SIZE: int = Field(default=1500, env="CHUNK_SIZE")
+    CHUNK_OVERLAP: int = Field(default=200, env="CHUNK_OVERLAP")
     MIN_CHUNK_SIZE: int = Field(default=100, env="MIN_CHUNK_SIZE")
-    MAX_CHUNK_SIZE: int = Field(default=1200, env="MAX_CHUNK_SIZE")
+    MAX_CHUNK_SIZE: int = Field(default=1800, env="MAX_CHUNK_SIZE")
     
     # Retrieval Configuration - Optimized for PURE vector search
     RETRIEVAL_TOP_K: int = Field(default=20, env="RETRIEVAL_TOP_K")  # Reduced for faster processing

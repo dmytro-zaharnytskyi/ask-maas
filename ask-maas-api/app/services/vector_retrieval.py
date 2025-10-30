@@ -15,8 +15,8 @@ logger = structlog.get_logger()
 class VectorRetrievalService:
     """Service for vector-based document retrieval with semantic search"""
     
-    def __init__(self, cache_service, settings: Settings):
-        self.cache_service = cache_service
+    def __init__(self, settings: Settings):
+        # No cache service - using Qdrant directly
         self.settings = settings
         self.http_client = httpx.AsyncClient(timeout=30.0)
         self.embeddings_url = settings.TEI_EMBEDDINGS_URL
@@ -74,8 +74,8 @@ class VectorRetrievalService:
             
             query_vector = query_embedding
             
-            # Get all indexed pages - fresh retrieval every time
-            all_page_urls = await self.cache_service.get_all_page_urls()
+            # No cache - return empty for now as we're using Qdrant
+            all_page_urls = []
             
             if not all_page_urls:
                 logger.warning("No indexed pages found")
@@ -219,10 +219,10 @@ class VectorRetrievalService:
         
         context_parts = []
         for i, chunk in enumerate(chunks[:5], 1):  # Limit context to top 5 chunks
-            source_info = f"[Source {i}: {chunk.title}]"
-            context_parts.append(f"{source_info}\n{chunk.text}\n")
+            # Don't add source labels that LLM will echo back
+            context_parts.append(chunk.text)
         
-        return "\n".join(context_parts)
+        return "\n\n".join(context_parts)
     
     async def close(self):
         """Close HTTP client"""

@@ -63,13 +63,22 @@ async def chat_unified(request: ChatRequest, req: Request) -> EventSourceRespons
             
             retrieved_chunks = await unified_service.search_unified(
                 query=request.query,
-                top_k=10,  # Get top 10 chunks from anywhere
-                score_threshold=0.3  # Reasonable threshold
+                top_k=30,  # Get more chunks initially for better selection
+                score_threshold=0.0  # No initial threshold, rely on reranking
             )
+            
+            # Rerank if we have chunks and reranker is available
+            if retrieved_chunks and hasattr(unified_service, 'rerank_chunks'):
+                logger.info(f"Reranking {len(retrieved_chunks)} chunks", request_id=request_id)
+                # Rerank and take top 15
+                from app.services.vector_retrieval import VectorRetrievalService
+                vector_service = VectorRetrievalService(settings)
+                retrieved_chunks = await vector_service.rerank_chunks(request.query, retrieved_chunks)
+                retrieved_chunks = retrieved_chunks[:15]
             
             retrieval_time = time.time() - retrieval_start
             logger.info(
-                "Unified retrieval completed",
+                "Unified retrieval and reranking completed",
                 request_id=request_id,
                 chunks_retrieved=len(retrieved_chunks),
                 retrieval_time=retrieval_time,
@@ -87,19 +96,14 @@ async def chat_unified(request: ChatRequest, req: Request) -> EventSourceRespons
                 return
             
             # Build context from ALL retrieved chunks
+            # Don't add article labels that LLM will echo back
             context_parts = []
             for chunk in retrieved_chunks:
-                source_type = chunk.metadata.get('source_type', 'unknown')
-                title = chunk.title
                 text = chunk.text
-                
-                # Format based on source type
-                if source_type == 'citation':
-                    context_parts.append(f"[External Source - {title}]:\n{text}")
-                else:
-                    context_parts.append(f"[Article - {title}]:\n{text}")
+                # Just add the text without labels
+                context_parts.append(text)
             
-            context = "\n\n---\n\n".join(context_parts)
+            context = "\n\n".join(context_parts)
             
             # Generate LLM response
             logger.info("Generating LLM response", request_id=request_id)
@@ -141,7 +145,7 @@ async def chat_unified(request: ChatRequest, req: Request) -> EventSourceRespons
                     
                     # Create citation
                     citations.append(Citation(
-                        text=chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text,
+                        text="",  # Don't include chunk text in citations, just article name
                         url=source_url,
                         title=title,
                         score=chunk.score

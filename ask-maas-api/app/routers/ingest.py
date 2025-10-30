@@ -14,7 +14,7 @@ import structlog
 
 from app.services.ingest import IngestService
 from app.services.github import GitHubService
-from app.services.cache import CacheService
+# Cache service removed - using Qdrant only
 # from app.services.vectordb import VectorDBService  # Disabled for now
 
 logger = structlog.get_logger()
@@ -83,11 +83,10 @@ async def ingest_page(
     
     # Get services from app state
     app = req.app
-    cache_service: CacheService = app.state.cache_service
     settings = app.state.settings
     
-    # Initialize ingest service
-    ingest_service = IngestService(cache_service, settings)
+    # Initialize ingest service (no cache service)
+    ingest_service = IngestService(None, settings)
     
     try:
         # Check if page is already cached (unless force refresh)
@@ -95,8 +94,9 @@ async def ingest_page(
         cache_hit = False
         
         if not request.force_refresh:
-            existing_index = await cache_service.get_page_index(page_url)
-            if existing_index:
+            # No caching - always fresh from Qdrant
+            existing_index = None
+            if False:
                 etag = existing_index.get("etag", "")
                 chunk_count = existing_index.get("chunk_count", 0)
                 
@@ -146,18 +146,18 @@ async def ingest_page(
         # Calculate ETag
         etag = hashlib.md5(page_content.get("content", "").encode()).hexdigest()
         
-        # Store in cache (for backward compatibility)
-        await cache_service.store_page_index(
-            page_url=page_url,
-            etag=etag,
-            index=index,
-            chunks=chunks,
-            metadata={
-                "chunk_count": len(chunks),
-                "indexed_at": time.time(),
-                "title": page_content.get("title", "")
-            }
-        )
+        # Cache removed - storing directly in Qdrant
+        # await cache_service.store_page_index(
+        #     page_url=page_url,
+        #     etag=etag,
+        #     index=index,
+        #     chunks=chunks,
+        #     metadata={
+        #         "chunk_count": len(chunks),
+        #         "indexed_at": time.time(),
+        #         "title": page_content.get("title", "")
+        #     }
+        # )
         
         # Vector database disabled for now
         # vectordb = VectorDBService(url=settings.QDRANT_URL)
@@ -269,11 +269,10 @@ async def ingest_content(
     
     # Get services from app state
     app = req.app
-    cache_service: CacheService = app.state.cache_service
     settings = app.state.settings
     
-    # Initialize ingest service
-    ingest_service = IngestService(cache_service, settings)
+    # Initialize ingest service (no cache service)
+    ingest_service = IngestService(None, settings)
     
     try:
         # Check if content is already cached (unless force refresh)
@@ -314,7 +313,7 @@ async def ingest_content(
         overlap = 200
         chunks = []
         
-        content = request.content[:50000]  # Limit total content for safety
+        content = request.content[:500000]  # Increased limit to 500k chars for larger documents
         
         for i in range(0, len(content), chunk_size - overlap):
             chunk_text = content[i:i + chunk_size]
@@ -371,8 +370,8 @@ async def ingest_content(
         # Calculate ETag
         etag = hashlib.md5(request.content.encode()).hexdigest()
         
-        # Store in cache (for backward compatibility)
-        await cache_service.store_page_index(
+        # Cache removed - storing directly in Qdrant
+        # await cache_service.store_page_index(
             page_url=request.page_url,
             etag=etag,
             index=index,

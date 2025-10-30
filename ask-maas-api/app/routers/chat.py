@@ -15,7 +15,7 @@ import structlog
 
 from app.services.vector_retrieval import VectorRetrievalService
 from app.services.llm import LLMService
-from app.services.cache import CacheService
+# Cache service removed - using Qdrant only
 from app.models.chat import ChatRequest, ChatResponse, Citation, StreamEvent
 from app.utils.metrics import track_request_duration, track_token_usage
 
@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 
 # Try to import citation expansion if available
 try:
-    from ask_maas_orchestrator_patch import expand_context
+    from app.services.citation_expansion import expand_context
     citation_expansion_available = True
     logger.info("Citation expansion enabled")
 except ImportError:
@@ -72,11 +72,11 @@ async def chat_endpoint(
     
     # Get services from app state
     app = req.app
-    cache_service: CacheService = app.state.cache_service
+    # No cache service - using Qdrant directly
     settings = app.state.settings
     
     # Initialize services - use vector retrieval for semantic search
-    vector_retrieval_service = VectorRetrievalService(cache_service, settings)
+    vector_retrieval_service = VectorRetrievalService(settings)
     llm_service = LLMService(settings)
     
     async def generate_response() -> AsyncGenerator[str, None]:
@@ -100,13 +100,20 @@ async def chat_endpoint(
             # Always search globally across ALL articles for comprehensive context
             retrieved_chunks = await vector_retrieval_service.retrieve_with_vectors(
                 query=request.query,
-                top_k=10,  # Get more chunks for better context
-                similarity_threshold=0.1  # Lower threshold to catch more relevant content
+                top_k=30,  # Get more chunks initially for reranking
+                similarity_threshold=0.0  # No threshold initially, let reranker decide
             )
+            
+            # Rerank chunks for better relevance
+            if len(retrieved_chunks) > 0:
+                logger.info(f"Reranking {len(retrieved_chunks)} chunks for better relevance", request_id=request_id)
+                retrieved_chunks = await vector_retrieval_service.rerank_chunks(request.query, retrieved_chunks)
+                # Take only top chunks after reranking
+                retrieved_chunks = retrieved_chunks[:15]  # Keep top 15 after reranking
             
             retrieval_time = time.time() - retrieval_start
             logger.info(
-                "Retrieval completed",
+                "Retrieval and reranking completed",
                 request_id=request_id,
                 chunks_retrieved=len(retrieved_chunks),
                 retrieval_time=retrieval_time
@@ -265,7 +272,7 @@ async def chat_endpoint(
                         
                         # Create citation object
                         citations.append(Citation(
-                            text=snippet_text[:200] + "..." if len(snippet_text) > 200 else snippet_text,
+                            text="",  # Don't include snippet text
                             url=f"https://{source_text.split('/')[0]}",  # Extract domain
                             title=source_text,
                             score=0.8  # High score for external citations
@@ -367,7 +374,7 @@ def extract_citations_with_context(text: str, chunks: List) -> List[Citation]:
         
         citations.append(
             Citation(
-                text=chunk.text[:250] + "...",
+                text="",  # Don't include chunk text in citations
                 url=chunk.url,
                 title=page_title,
                 score=chunk.score

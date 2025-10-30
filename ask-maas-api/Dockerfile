@@ -15,8 +15,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Copy citation expansion patch
-COPY ../ask_maas_orchestrator_patch /app/ask_maas_orchestrator_patch
+# Citation expansion now in app/services/citation_expansion.py
 
 # Set environment variables
 ENV PYTHONPATH=/app

@@ -31,7 +31,6 @@ try:
     chat_unified_available = True
 except ImportError:
     chat_unified_available = False
-from app.services.cache import CacheService
 from app.services.config import Settings
 from app.utils.logging import setup_logging
 
@@ -67,22 +66,19 @@ cache_misses = Counter(
     ['cache_type']
 )
 
-# Initialize services
-cache_service: Optional[CacheService] = None
+# Initialize services (Redis/FAISS removed)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle"""
-    global cache_service
     
     # Startup
     logger.info("Starting Ask MaaS Orchestrator API", 
                 version=settings.API_VERSION,
                 environment=settings.ENVIRONMENT)
     
-    # Initialize cache service
-    cache_service = CacheService(settings)
-    await cache_service.initialize()
+    # Cache service removed - using Qdrant only
+    # No Redis/FAISS initialization needed
     
     # Setup OpenTelemetry if enabled
     if settings.OTEL_ENABLED:
@@ -97,8 +93,7 @@ async def lifespan(app: FastAPI):
         # Instrument FastAPI
         FastAPIInstrumentor.instrument_app(app)
     
-    # Set services in app state
-    app.state.cache_service = cache_service
+    # Set services in app state (no cache service)
     app.state.settings = settings
     
     logger.info("API initialization complete")
@@ -107,9 +102,6 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Ask MaaS Orchestrator API")
-    
-    if cache_service:
-        await cache_service.close()
     
     logger.info("Shutdown complete")
 

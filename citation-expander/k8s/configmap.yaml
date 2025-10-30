@@ -19,6 +19,9 @@ data:
       # Documentation Sites
       - "^https?://(www\\.)?.*\\.readthedocs\\.(io|org)/"
       - "^https?://docs\\."
+      - "^https?://.*\\.github\\.io/"  # GitHub Pages sites like kserve.github.io
+      - "^https?://(www\\.)?docs\\.kuadrant\\.io/"  # Kuadrant documentation
+      - "^https?://(www\\.)?kserve\\.github\\.io/"  # KServe documentation
       - "^https?://(www\\.)?kubernetes\\.io/"
       - "^https?://(www\\.)?openshift\\.(com|io)/"
       - "^https?://(www\\.)?docker\\.com/docs/"
@@ -28,6 +31,7 @@ data:
       - "^https?://(www\\.)?developers\\.redhat\\.com/"
       - "^https?://(www\\.)?access\\.redhat\\.com/"
       - "^https?://(www\\.)?cloud\\.redhat\\.com/"
+      - "^https?://docs\\.redhat\\.com/"  # Red Hat documentation portal
       
       # Cloud Providers
       - "^https?://(www\\.)?cloud\\.google\\.com/"
